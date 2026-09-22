@@ -1,5 +1,5 @@
-MODULES = *.js locale/*/LC_MESSAGES/*.mo metadata.json stylesheet.css LICENSE.rst README.rst schemas/
-INSTALLPATH=~/.local/share/gnome-shell/extensions/clipboard-indicator@tudmotu.com/
+MODULES = *.js locale/*/LC_MESSAGES/*.mo metadata.json stylesheet.css LICENSE.rst README.md schemas/
+INSTALLPATH=~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova/
 
 all: compile-locales compile-settings
 
@@ -11,9 +11,9 @@ compile-locales:
 		msgfmt $(file) -o $(subst .po,.mo,$(file));)
 
 update-po-files:
-	xgettext -L Python --from-code=UTF-8 -k_ -kN_ -o clipboard-indicator.pot *.js
+	xgettext -L Python --from-code=UTF-8 -k_ -kN_ -o clipboard-with-passwords.pot *.js
 	$(foreach file, $(wildcard locale/*/LC_MESSAGES/*.po), \
-		msgmerge $(file) clipboard-indicator.pot -o $(file);)
+		msgmerge $(file) clipboard-with-passwords.pot -o $(file);)
 
 install: all
 	rm -rf $(INSTALLPATH)

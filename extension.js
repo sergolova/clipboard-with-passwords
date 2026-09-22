@@ -461,7 +461,7 @@ const ClipboardIndicator = GObject.registerClass({
                 this.ignoreNextClipboardChange = true;
                 this.extension.clipboard.set_text(CLIPBOARD_TYPE, text);
                 if (NOTIFY_ON_COPY) {
-                    this._showNotification(_("Скопировано из хранилища"));
+                    this._showNotification(_("Copied from vault"));
                 }
             };
 
@@ -1804,8 +1804,8 @@ const ClipboardIndicator = GObject.registerClass({
 
         if (!this.vaultManager.isUnlocked()) {
             const dialog = new MasterPasswordDialog(
-                _('Хранилище паролей'),
-                _('Введите мастер-пароль для разблокировки:'),
+                _('Password Vault'),
+                _('Enter the master password to unlock:'),
                 async (pwd) => {
                     try {
                         await this.vaultManager.unlock(pwd);

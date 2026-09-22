@@ -50,20 +50,20 @@ export const MasterPasswordDialog = GObject.registerClass(
             let titleLabel = new St.Label({
                 style: 'font-weight: bold; font-size: 15px;',
                 x_align: Clutter.ActorAlign.CENTER,
-                text: title || 'Хранилище паролей'
+                text: title || _('Password Vault')
             });
             mainBox.add_child(titleLabel);
 
             let msgLabel = new St.Label({
                 style: 'font-size: 12px; color: #888888;',
                 x_align: Clutter.ActorAlign.CENTER,
-                text: message || 'Введите мастер-пароль для разблокировки:'
+                text: message || _('Enter the master password to unlock:')
             });
             mainBox.add_child(msgLabel);
 
             let pwdEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.entry = new St.PasswordEntry({
-                hint_text: 'Мастер-пароль',
+                hint_text: _('Master password'),
                 can_focus: true,
                 style: 'padding: 8px; font-size: 14px;'
             });
@@ -87,14 +87,14 @@ export const MasterPasswordDialog = GObject.registerClass(
 
             this.setButtons([
                 {
-                    label: 'Отмена',
+                    label: _('Cancel'),
                     action: () => {
                         this.close();
                     },
                     key: Clutter.KEY_Escape
                 },
                 {
-                    label: 'Разблокировать',
+                    label: _('Unlock'),
                     action: () => {
                         this._submit(callback);
                     },
@@ -111,19 +111,19 @@ export const MasterPasswordDialog = GObject.registerClass(
         async _submit(callback) {
             const pwd = this.entry.get_text();
             if (!pwd) {
-                this.setError('Пароль не может быть пустым');
+                this.setError(_('Password cannot be empty'));
                 return;
             }
-            this.setError('Разблокировка...');
+            this.setError(_('Unlocking…'));
             try {
                 let success = await callback(pwd);
                 if (success) {
                     this.close();
                 } else {
-                    this.setError('Неверный пароль или ошибка архива');
+                    this.setError(_('Wrong password or archive error'));
                 }
             } catch (e) {
-                this.setError('Неверный пароль или ошибка архива');
+                this.setError(_('Wrong password or archive error'));
             }
         }
     }
@@ -154,12 +154,12 @@ export const ServiceEditDialog = GObject.registerClass(
 
             let titleLabel = new St.Label({
                 style: 'font-weight: bold; font-size: 16px; margin-bottom: 6px;',
-                text: serviceItem ? `Редактирование: ${serviceItem.name}` : 'Новый сервис'
+                text: serviceItem ? `${_('Edit')}: ${serviceItem.name}` : _('New service')
             });
             mainBox.add_child(titleLabel);
 
             // CATEGORY AT THE TOP
-            mainBox.add_child(new St.Label({ text: 'Категория:', style: 'font-weight: bold; font-size: 12px;' }));
+            mainBox.add_child(new St.Label({ text: _('Category:'), style: 'font-weight: bold; font-size: 12px;' }));
             
             const initialCategory = serviceItem ? serviceItem.category : (existingCategories && existingCategories[0] ? existingCategories[0] : 'Общее');
 
@@ -200,7 +200,7 @@ export const ServiceEditDialog = GObject.registerClass(
             let box = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.categoryEntry = new St.Entry({
                 text: initialCategory,
-                hint_text: 'Название категории (напр. Работа)'
+                hint_text: _('Category name (e.g. Work)')
             });
             this.categoryEntry.set_x_expand(true);
             this.categoryEntry.clutter_text.connect('text-changed', () => {
@@ -211,11 +211,11 @@ export const ServiceEditDialog = GObject.registerClass(
             mainBox.add_child(box);
 
             // NAME
-            mainBox.add_child(new St.Label({ text: 'Название сервиса:', style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
+            mainBox.add_child(new St.Label({ text: _('Service name:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let nameEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.nameEntry = new St.Entry({
                 text: serviceItem ? serviceItem.name : '',
-                hint_text: 'Например: GitHub'
+                hint_text: _('For example: GitHub')
             });
             this.nameEntry.set_x_expand(true);
             nameEntryBox.add_child(this.nameEntry);
@@ -224,11 +224,11 @@ export const ServiceEditDialog = GObject.registerClass(
             if (focusFieldName === 'name') this.focusTargetWidget = this.nameEntry;
 
             // DESCRIPTION
-            mainBox.add_child(new St.Label({ text: 'Описание:', style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
+            mainBox.add_child(new St.Label({ text: _('Description:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let descEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.descEntry = new St.Entry({
                 text: serviceItem ? (serviceItem.description || '') : '',
-                hint_text: 'Описание (необязательно)'
+                hint_text: _('Description (optional)')
             });
             this.descEntry.set_x_expand(true);
             descEntryBox.add_child(this.descEntry);
@@ -237,7 +237,7 @@ export const ServiceEditDialog = GObject.registerClass(
             if (focusFieldName === 'description') this.focusTargetWidget = this.descEntry;
 
             // LOGIN
-            mainBox.add_child(new St.Label({ text: 'Логин / Email:', style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
+            mainBox.add_child(new St.Label({ text: _('Login / Email:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let loginEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.loginEntry = new St.Entry({
                 text: serviceItem ? serviceItem.login : '',
@@ -250,18 +250,18 @@ export const ServiceEditDialog = GObject.registerClass(
             if (focusFieldName === 'login') this.focusTargetWidget = this.loginEntry;
 
             // PASSWORD + GENERATOR
-            mainBox.add_child(new St.Label({ text: 'Пароль:', style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
+            mainBox.add_child(new St.Label({ text: _('Password:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let pwdBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.pwdEntry = new St.PasswordEntry({
                 text: serviceItem ? serviceItem.password : '',
-                hint_text: 'Пароль'
+                hint_text: _('Password')
             });
             this.pwdEntry.set_x_expand(true);
             pwdBox.add_child(this.pwdEntry);
             if (focusFieldName === 'password') this.focusTargetWidget = this.pwdEntry;
 
             let genBtn = new St.Button({
-                label: '🎲 16 с.',
+                label: '🎲 ' + _('16 chars'),
                 style_class: 'button',
                 can_focus: false,
                 style: 'padding: 4px 8px; font-size: 11px;'
@@ -277,10 +277,10 @@ export const ServiceEditDialog = GObject.registerClass(
 
             // EXTRA FIELDS
             let extraHeaderBox = new St.BoxLayout({ vertical: false, style: 'margin-top: 10px;' });
-            extraHeaderBox.add_child(new St.Label({ text: 'Дополнительные поля:', style: 'font-weight: bold; font-size: 12px;', x_expand: true }));
+            extraHeaderBox.add_child(new St.Label({ text: _('Extra fields:'), style: 'font-weight: bold; font-size: 12px;', x_expand: true }));
 
             let addExtraBtn = new St.Button({
-                label: '+ Добавить поле',
+                label: '+ ' + _('Add field'),
                 style_class: 'button',
                 can_focus: false,
                 style: 'padding: 2px 6px; font-size: 11px;'
@@ -308,7 +308,7 @@ export const ServiceEditDialog = GObject.registerClass(
 
             let buttons = [
                 {
-                    label: 'Отмена',
+                    label: _('Cancel'),
                     action: () => this.close(),
                     key: Clutter.KEY_Escape
                 }
@@ -316,7 +316,7 @@ export const ServiceEditDialog = GObject.registerClass(
 
             if (serviceItem && onDelete) {
                 buttons.push({
-                    label: '🗑️ Удалить',
+                    label: '🗑️ ' + _('Delete'),
                     action: () => {
                         this._confirmDelete(() => {
                             this.close();
@@ -327,10 +327,10 @@ export const ServiceEditDialog = GObject.registerClass(
             }
 
             buttons.push({
-                label: 'Сохранить',
+                label: _('Save'),
                 action: () => {
                     const data = {
-                        name: this.nameEntry.get_text() || 'Без названия',
+                        name: this.nameEntry.get_text() || _('Untitled'),
                         category: this.categoryEntry.get_text() || 'Общее',
                         description: this.descEntry.get_text() || '',
                         login: this.loginEntry.get_text() || '',
@@ -415,27 +415,27 @@ export const ServiceEditDialog = GObject.registerClass(
             confirmDialog.contentLayout.add_child(box);
 
             box.add_child(new St.Label({
-                text: 'Удаление сервиса',
+                text: _('Delete service'),
                 style: 'font-weight: bold; font-size: 15px; color: #ff5555;',
                 x_align: Clutter.ActorAlign.CENTER
             }));
 
             box.add_child(new St.Label({
-                text: 'Вы уверены, что хотите безвозвратно удалить этот сервис?',
+                text: _('Are you sure you want to permanently delete this service?'),
                 style: 'font-size: 12px;',
                 x_align: Clutter.ActorAlign.CENTER
             }));
 
             confirmDialog.setButtons([
                 {
-                    label: 'Отмена',
+                    label: _('Cancel'),
                     action: () => {
                         confirmDialog.close();
                     },
                     key: Clutter.KEY_Escape
                 },
                 {
-                    label: 'Удалить',
+                    label: _('Delete'),
                     action: () => {
                         confirmDialog.close();
                         onConfirmed();
@@ -449,10 +449,10 @@ export const ServiceEditDialog = GObject.registerClass(
         _addExtraRow(labelVal = '', valueVal = '', isHidden = false) {
             let rowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
 
-            let labelEntry = new St.Entry({ text: labelVal, hint_text: 'Метка (напр. 2FA)' });
+            let labelEntry = new St.Entry({ text: labelVal, hint_text: _('Label (e.g. 2FA)') });
             labelEntry.set_width(120);
 
-            let valueEntry = new St.Entry({ text: valueVal, hint_text: 'Значение' });
+            let valueEntry = new St.Entry({ text: valueVal, hint_text: _('Value') });
             valueEntry.set_x_expand(true);
 
             if (isHidden) {
@@ -464,7 +464,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 style_class: 'button',
                 can_focus: false,
                 style: 'padding: 2px 6px; font-size: 11px;',
-                accessible_name: 'Скрыть значение'
+                accessible_name: _('Hide value')
             });
 
             let delBtn = new St.Button({

@@ -55,7 +55,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         let currentWidth = 0;
         categories.forEach(cat => {
-            const labelText = `${cat} (${this._categoryCount(cat)})`;
+            const labelText = `${cat === 'Все' ? _('All') : cat} (${this._categoryCount(cat)})`;
             let btn = new St.Button({
                 label: labelText,
                 style_class: 'button',
@@ -92,7 +92,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (!this.categoryButtons) return;
         this.categoryButtons.forEach(({ cat, btn }) => {
             const isSelected = cat === this.selectedCategory;
-            btn.set_label(`${cat} (${this._categoryCount(cat)})`);
+            btn.set_label(`${cat === 'Все' ? _('All') : cat} (${this._categoryCount(cat)})`);
             btn.style_class = isSelected ? 'button button-active' : 'button';
             btn.style = `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
                 isSelected ? 'background-color: #3584e4; color: #ffffff; font-weight: bold;' : 'background-color: rgba(255,255,255,0.1); color: #eeeeee;'
@@ -134,7 +134,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         let topBar = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
 
         this.searchEntry = new St.Entry({
-            hint_text: '🔍 Поиск по названию или логину...',
+            hint_text: '🔍 ' + _('Search by name or login…'),
             text: this.currentQuery,
             style: 'padding: 4px 8px; font-size: 13px;'
         });
@@ -232,15 +232,15 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.recentBox.add_child(recentHeader);
 
         if (recent.login) {
-            this.recentBox.add_child(this._createFieldRow(recent, 'Логин', recent.login, 'login'));
+            this.recentBox.add_child(this._createFieldRow(recent, _('Login'), recent.login, 'login'));
         }
         if (recent.password) {
-            this.recentBox.add_child(this._createFieldRow(recent, 'Пароль', recent.password, 'password', true));
+            this.recentBox.add_child(this._createFieldRow(recent, _('Password'), recent.password, 'password', true));
         }
         if (recent.extraFields && recent.extraFields.length > 0) {
             recent.extraFields.forEach((f, idx) => {
                 if (f.value) {
-                    this.recentBox.add_child(this._createFieldRow(recent, f.label || 'Доп. поле', f.value, `extra_${idx}`, !!f.isHidden));
+                    this.recentBox.add_child(this._createFieldRow(recent, f.label || _('Extra field'), f.value, `extra_${idx}`, !!f.isHidden));
                 }
             });
         }
@@ -254,7 +254,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         if (items.length === 0) {
             let emptyLabel = new St.Label({
-                text: 'Хранилище пусто. Нажмите +, чтобы добавить сервис.',
+                text: _('Vault is empty. Press + to add a service.'),
                 style: 'color: #888888; font-size: 12px; padding: 16px;',
                 x_align: Clutter.ActorAlign.CENTER
             });
@@ -328,7 +328,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         let copyAllBtn = new St.Button({
             style_class: 'button',
             can_focus: false,
-            accessible_name: 'Копировать всё',
+            accessible_name: _('Copy all'),
             style: 'padding: 2px 6px;',
             child: new St.Icon({
                 icon_name: 'edit-copy-symbolic',
@@ -338,12 +338,12 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         copyAllBtn.connect('clicked', () => {
             this.vaultManager.setRecentService(item);
             const lines = [];
-            if (item.login) lines.push('Логин: ' + item.login);
-            if (item.password) lines.push('Пароль: ' + item.password);
+            if (item.login) lines.push(`${_('Login')}: ${item.login}`);
+            if (item.password) lines.push(`${_('Password')}: ${item.password}`);
             if (item.extraFields && item.extraFields.length > 0) {
                 item.extraFields.forEach(f => {
                     if (f.label || f.value) {
-                        lines.push((f.label || 'Доп. поле') + ': ' + (f.value || ''));
+                        lines.push(`${f.label || _('Extra field')}: ${f.value || ''}`);
                     }
                 });
             }
@@ -379,18 +379,18 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         // Login row
         if (item.login) {
-            card.add_child(this._createFieldRow(item, 'Логин', item.login, 'login'));
+            card.add_child(this._createFieldRow(item, _('Login'), item.login, 'login'));
         }
 
         // Password row
         if (item.password) {
-            card.add_child(this._createFieldRow(item, 'Пароль', item.password, 'password', true));
+            card.add_child(this._createFieldRow(item, _('Password'), item.password, 'password', true));
         }
 
         // Extra fields
         if (item.extraFields && item.extraFields.length > 0) {
             item.extraFields.forEach((field, index) => {
-                card.add_child(this._createFieldRow(item, field.label || `Доп. ${index + 1}`, field.value, `extra_${index}`, !!field.isHidden));
+                card.add_child(this._createFieldRow(item, field.label || `${_('Extra')} ${index + 1}`, field.value, `extra_${index}`, !!field.isHidden));
             });
         }
 
