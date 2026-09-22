@@ -44,6 +44,10 @@
     max-height:450px;
 }
 
+.ci-favorites-menu-section {
+    max-height:175px;
+}
+
 .ci-main-menu-section StButton.ci-pin-btn {
     color: rgba(255,255,255,0.3);
 }
@@ -96,4 +100,44 @@
     border-radius: 4px;
     padding: 8px;
     min-width: 384px;
+}
+
+/* Type-based item styling */
+.clipboard-type-image {
+    min-height: 3em;
+}
+
+.clipboard-type-image .clipboard-menu-img-preview {
+    width: 3em;
+    height: 3em;
+}
+
+.clipboard-type-multiline {
+
+}
+
+.clipboard-type-color {
+    
+}
+
+.clipboard-type-file {
+    color: #ff4747;
+}
+
+.clipboard-type-email {
+    color: #da9d10;
+}
+
+.clipboard-type-url {
+    color: #3cb4ff;
+}
+
+.clipboard-type-password {
+    color: #e67300;
+    background-color: rgba(230, 115, 0, 0.08);
+}
+
+.clipboard-second-line {
+    font-size: 0.85em;
+    color: rgb(76 76 76);
 }

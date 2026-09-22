@@ -38,6 +38,7 @@ export class Registry {
             }
 
             if (entry.getTag()) item.tag = entry.getTag();
+            if (entry.isPassword()) item.password = true;
         }
 
         this.writeToFile(registryContent);
@@ -47,95 +48,60 @@ export class Registry {
         let json = JSON.stringify(registry);
         let contents = new GLib.Bytes(json);
 
-        // Make sure dir exists
-        GLib.mkdir_with_parents(this.REGISTRY_DIR, parseInt('0775', 8));
-
-        // Write contents to file asynchronously
-        let file = Gio.file_new_for_path(this.REGISTRY_PATH);
-        file.replace_async(null, false, Gio.FileCreateFlags.NONE,
-                            GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-
-            let stream = obj.replace_finish(res);
-
-            stream.write_bytes_async(contents, GLib.PRIORITY_DEFAULT,
-                                null, (w_obj, w_res) => {
-
-                w_obj.write_bytes_finish(w_res);
-                stream.close(null);
-            });
-        });
+        try {
+            GLib.mkdir_with_parents(this.REGISTRY_DIR, parseInt('0775', 8));
+            let file = Gio.file_new_for_path(this.REGISTRY_PATH);
+            file.replace_contents(contents.get_data(), null, false, Gio.FileCreateFlags.NONE, null);
+        } catch (e) {
+            console.error('Clipboard Indicator: failed to write registry file', e);
+        }
     }
 
     async read () {
-        return new Promise(resolve => {
-            if (GLib.file_test(this.REGISTRY_PATH, FileTest.EXISTS)) {
-                let file = Gio.file_new_for_path(this.REGISTRY_PATH);
-                let CACHE_FILE_SIZE = this.settings.get_int(PrefsFields.CACHE_FILE_SIZE);
+        if (!GLib.file_test(this.REGISTRY_PATH, FileTest.EXISTS)) {
+            return [];
+        }
 
-                file.query_info_async('*', FileQueryInfoFlags.NONE,
-                                      GLib.PRIORITY_DEFAULT, null, (src, res) => {
-                    // Check if file size is larger than CACHE_FILE_SIZE
-                    // If so, make a backup of file, and resolve with empty array
-                    let file_info = src.query_info_finish(res);
+        try {
+            let file = Gio.file_new_for_path(this.REGISTRY_PATH);
+            let CACHE_FILE_SIZE = this.settings.get_int(PrefsFields.CACHE_FILE_SIZE);
 
-                    if (file_info.get_size() >= CACHE_FILE_SIZE * 1024 * 1024) {
-                        let destination = Gio.file_new_for_path(this.BACKUP_REGISTRY_PATH);
-
-                        file.move(destination, FileCopyFlags.OVERWRITE, null, null);
-                        resolve([]);
-                        return;
-                    }
-
-                    file.load_contents_async(null, (obj, res) => {
-                        let [success, contents] = obj.load_contents_finish(res);
-
-                        if (success) {
-                            let max_size = this.settings.get_int(PrefsFields.HISTORY_SIZE);
-                            const cacheTextData = new TextDecoder().decode(contents);
-                            let registry;
-                            if (cacheTextData.trim().length == 0) {
-                                registry = [];
-                            } else {
-                                registry = JSON.parse(cacheTextData);
-                            }
-                            const entriesPromises = registry.map(
-                                jsonEntry => {
-                                    return ClipboardEntry.fromJSON(jsonEntry)
-                                }
-                            );
-
-                            Promise.all(entriesPromises).then(clipboardEntries => {
-                                clipboardEntries = clipboardEntries
-                                    .filter(entry => entry !== null);
-
-                                let registryNoFavorite = clipboardEntries
-                                    .filter(entry => !entry.isFavorite());
-
-                                while (registryNoFavorite.length > max_size) {
-                                    let oldestNoFavorite = registryNoFavorite.shift();
-                                    let itemIdx = clipboardEntries.indexOf(oldestNoFavorite);
-                                    clipboardEntries.splice(itemIdx,1);
-
-                                    registryNoFavorite = clipboardEntries.filter(
-                                        entry => !entry.isFavorite()
-                                    );
-                                }
-
-                                resolve(clipboardEntries);
-                            }).catch(e => {
-                                console.error(e);
-                            });
-                        }
-                        else {
-                            console.error('Clipboard Indicator: failed to open registry file');
-                        }
-                    });
-                });
+            const file_info = file.query_info('*', FileQueryInfoFlags.NONE, null);
+            if (file_info && file_info.get_size() >= CACHE_FILE_SIZE * 1024 * 1024) {
+                let destination = Gio.file_new_for_path(this.BACKUP_REGISTRY_PATH);
+                file.move(destination, FileCopyFlags.OVERWRITE, null, null);
+                return [];
             }
-            else {
-                resolve([]);
+
+            const [success, contents] = file.load_contents(null);
+            if (!success || !contents) {
+                return [];
             }
-        });
+
+            let max_size = this.settings.get_int(PrefsFields.HISTORY_SIZE);
+            const cacheTextData = new TextDecoder().decode(contents);
+            if (cacheTextData.trim().length === 0) {
+                return [];
+            }
+
+            const registry = JSON.parse(cacheTextData);
+            const entriesPromises = registry.map(jsonEntry => ClipboardEntry.fromJSON(jsonEntry));
+            let clipboardEntries = await Promise.all(entriesPromises);
+            clipboardEntries = clipboardEntries.filter(entry => entry !== null);
+
+            let registryNoFavorite = clipboardEntries.filter(entry => !entry.isFavorite());
+            while (registryNoFavorite.length > max_size) {
+                let oldestNoFavorite = registryNoFavorite.shift();
+                let itemIdx = clipboardEntries.indexOf(oldestNoFavorite);
+                clipboardEntries.splice(itemIdx, 1);
+                registryNoFavorite = clipboardEntries.filter(entry => !entry.isFavorite());
+            }
+
+            return clipboardEntries;
+        } catch (e) {
+            console.error('Clipboard Indicator: failed to read registry file', e);
+            return [];
+        }
     }
 
     #entryFileExists (entry) {
@@ -252,36 +218,25 @@ export class ClipboardEntry {
 
             let file = Gio.file_new_for_path(filename);
 
-            const contentType = await file.query_info_async('*', FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-                try {
-                    const fileInfo = obj.query_info_finish(res);
-                    return fileInfo.get_content_type();
-                } catch (e) {
-                    console.error(e);
-                }
-            });
-
-            if (contentType && !contentType.startsWith('image/') && !contentType.startsWith('text/')) {
-                bytes = new TextEncoder().encode(jsonEntry.contents);
-            }
-            else {
-                bytes = await new Promise((resolve, reject) => file.load_contents_async(null, (obj, res) => {
-                    let [success, contents] = obj.load_contents_finish(res);
-
-                    if (success) {
-                        resolve(contents);
-                    }
-                    else {
-                        reject(
-                            new Error('Clipboard Indicator: could not read image file from cache')
-                        );
-                    }
-                }));
-            }
+            // Load the cached file synchronously. The previous implementation
+            // used query_info_async() + load_contents_async() inside a
+            // Promise.all(); when many image entries were restored at startup
+            // (including multi-MB screenshots), those async callbacks could be
+            // dispatched while gjs was sweeping the heap during a major GC.
+            // The shell then blocks the JS callback ("Attempting to run a JS
+            // callback during garbage collection ... AsyncReadyCallback()"),
+            // so the promises never resolve and the shell hangs forever at
+            // startup. These are all small local cache files, so blocking is
+            // cheap (a few ms each).
+            const [, contents] = file.load_contents(null);
+            if (!contents)
+                return null;
+            bytes = contents;
         }
 
         const entry = new ClipboardEntry(mimetype, bytes, favorite);
         if (jsonEntry.tag) entry.setTag(jsonEntry.tag);
+        if (jsonEntry.password) entry.setPassword(true);
         return entry;
     }
 
@@ -326,6 +281,183 @@ export class ClipboardEntry {
 
     isImage () {
         return this.#mimetype.startsWith('image/');
+    }
+
+    #isPassword = false;
+
+    isPassword () {
+        return this.#isPassword;
+    }
+
+    setPassword (val) {
+        this.#isPassword = !!val;
+    }
+
+    getMaskedValue () {
+        const text = this.getStringValue();
+        if (text.length <= 3) return '***';
+        return text.slice(0, -3) + '***';
+    }
+
+    isURIList () {
+        return this.#mimetype === 'text/uri-list';
+    }
+
+    isURL () {
+        if (!this.isText() || this.isURIList()) return false;
+        const text = this.getStringValue();
+        return text.startsWith('http://') || text.startsWith('https://');
+    }
+
+    isEmail () {
+        if (!this.isText() || this.isURIList()) return false;
+        const text = this.getStringValue().trim();
+
+        // Быстрая проверка: email не может содержать слэши или начинаться с /
+        if (text.includes('/') || text.startsWith('.')) return false;
+
+        // Регулярка с запретом спецсимволов и путей
+        const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+        return emailRegex.test(text);
+    }
+
+    isMultiline () {
+        if (!this.isText() || this.isURIList()) return false;
+        return this.getStringValue().includes('\n');
+    }
+
+    isColor () {
+        const CSS_NAMED_COLORS = new Set([
+            'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
+            'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue',
+            'chartreuse', 'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan',
+            'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey',
+            'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred',
+            'darksalmon', 'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey',
+            'darkturquoise', 'darkviolet', 'deeppink', 'deepskyblue', 'dimgray', 'dimgrey',
+            'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro',
+            'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow', 'grey',
+            'honeydew', 'hotpink', 'indianred', 'indigo', 'ivory', 'khaki', 'lavender',
+            'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
+            'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink',
+            'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey',
+            'lightsteelblue', 'lightyellow', 'lime', 'limegreen', 'linen', 'magenta',
+            'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
+            'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
+            'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin',
+            'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange', 'orangered',
+            'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred',
+            'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple',
+            'rebeccapurple', 'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon',
+            'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver', 'skyblue', 'slateblue',
+            'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal',
+            'thistle', 'tomato', 'transparent', 'turquoise', 'violet', 'wheat', 'white',
+            'whitesmoke', 'yellow', 'yellowgreen'
+        ]);
+
+        if (!this.isText() || this.isURIList()) return false;
+        const text = this.getStringValue().trim().toLowerCase();
+
+        // Быстрый отсекатель по длине (самое длинное имя 'lightgoldenrodyellow' = 20 символов)
+        if (text.length === 0 || text.length > 50) return false;
+
+        // 1. Именованные CSS-цвета
+        if (CSS_NAMED_COLORS.has(text)) return true;
+
+        // 2. HEX с альфа-каналом (3, 4, 6, 8 символов; с # или без #)
+        // Если начинается с # — подходят любые HEX-символы (включая чисто цифровые, напр. #123)
+        // Если без # — обязательно наличие хотя бы одной буквы a-f (чтобы отсеять чисто десятичные числа вроде 123)
+        const hasHash = text.startsWith('#');
+        const cleanText = hasHash ? text.slice(1) : text;
+           
+        if ([3, 4, 6, 8].includes(cleanText.length)) {
+            if (hasHash && /^[0-9a-f]+$/.test(cleanText)) {
+                return true;
+            }
+            if (!hasHash && /^[0-9a-f]+$/.test(cleanText) && /[a-f]/.test(cleanText)) {
+                return true;
+            }
+        }
+
+        // 3. RGB / RGBA (поддержка классического формата с запятыми и современного без них)
+        // Примеры: rgb(255, 0, 0), rgba(255, 0, 0, 0.5), rgb(255 0 0 / 50%)
+        const rgbRegex = /^rgba?\(\s*\d+\s*[\s,]\s*\d+\s*[\s,]\s*\d+\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
+        if (rgbRegex.test(text)) return true;
+
+        // 4. HSL / HSLA (поддержка процентов и альфа-канала)
+        // Примеры: hsl(120, 100%, 50%), hsla(120, 100%, 50%, 0.3), hsl(180deg 20% 50% / 80%)
+        const hslRegex = /^hsla?\(\s*\d+(?:deg)?\s*[\s,]\s*\d+%\s*[\s,]\s*\d+%\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
+        if (hslRegex.test(text)) return true;
+
+        return false;
+    }
+
+    needsHashPrefix() {
+        if (!this.isColor()) return false;
+
+        const text = this.getStringValue().trim();
+
+        // Если уже есть #, добавка не нужна
+        if (text.startsWith('#')) return false;
+
+        // Проверяем, является ли строка HEX-кодом без решётки
+        const cleanText = text.toLowerCase();
+        const isHexLength = [3, 4, 6, 8].includes(cleanText.length);
+        const isPureHex = /^[0-9a-f]+$/.test(cleanText);
+
+        return isHexLength && isPureHex;
+    }
+
+    parseURIList () {
+        if (!this.isURIList()) return null;
+        const text = this.getStringValue();
+        const uris = text.trim().split('\n').filter(u => u.trim().length > 0);
+        return uris.map(uri => {
+            try {
+                return decodeURI(uri.replace(/^file:\/\//, ''));
+            } catch (e) {
+                return uri;
+            }
+        });
+    }
+
+    getURIListDisplay () {
+        const paths = this.parseURIList();
+        if (!paths || paths.length === 0) return null;
+
+        const commonPath = this.#findCommonPath(paths);
+        const prefix = commonPath.endsWith('/') ? commonPath : commonPath + '/';
+        const fileNames = paths.map(p =>
+            p.startsWith(prefix) ? p.slice(prefix.length) : p
+        );
+
+        return {
+            count: paths.length,
+            commonPath: commonPath,
+            fileNames: fileNames
+        };
+    }
+
+    #findCommonPath (paths) {
+        if (paths.length === 0) return '';
+        if (paths.length === 1) {
+            const lastSlash = paths[0].lastIndexOf('/');
+            return lastSlash >= 0 ? paths[0].slice(0, lastSlash) : '';
+        }
+
+        let common = paths[0];
+        for (let i = 1; i < paths.length; i++) {
+            let j = 0;
+            while (j < common.length && j < paths[i].length &&
+                   common[j] === paths[i][j]) {
+                j++;
+            }
+            common = common.slice(0, j);
+        }
+
+        const lastSlash = common.lastIndexOf('/');
+        return lastSlash >= 0 ? common.slice(0, lastSlash) : common;
     }
 
     setText (text) {

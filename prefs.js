@@ -20,6 +20,7 @@ export default class ClipboardIndicatorPreferences extends ExtensionPreferences 
             { title: _('Topbar'),        iconName: 'edit-paste-symbolic',              groups: [settingsUI.topbar] },
             { title: _('Notifications'), iconName: 'emoji-objects-symbolic',           groups: [settingsUI.notifications] },
             { title: _('Shortcuts'),     iconName: 'input-keyboard-symbolic',          groups: [settingsUI.shortcuts] },
+            { title: _('Password Vault'),iconName: 'dialog-password-symbolic',         groups: [settingsUI.password_vault] },
         ];
 
         window.set_default_size(700, 650);
@@ -258,6 +259,14 @@ class Settings {
             this.field_clear_history_interval.set_sensitive(widget.active);
         });
 
+        this.field_password_vault_path = new Adw.EntryRow({
+            title: _("Password Vault File Path"),
+            text: this.schema.get_string(PrefsFields.PASSWORD_VAULT_PATH) || '~/.config/clipboard-indicator/passwords.zip'
+        });
+        this.field_password_vault_path.connect('changed', (row) => {
+            this.schema.set_string(PrefsFields.PASSWORD_VAULT_PATH, row.get_text());
+        });
+
         this.ui =  new Adw.PreferencesGroup({ title: _('UI') });
         this.behavior = new Adw.PreferencesGroup({title: _('Behavior')});
         this.exclusion = new Adw.PreferencesGroup({ title: _('Exclusion') });
@@ -267,6 +276,9 @@ class Settings {
         this.shortcuts =  new Adw.PreferencesGroup({ title: _('Shortcuts') });
         this.search = new Adw.PreferencesGroup({title: _('Search')});
         this.item_actions = new Adw.PreferencesGroup({ title: _('Item Actions') });
+        this.password_vault = new Adw.PreferencesGroup({ title: _('Password Vault Settings') });
+
+        this.password_vault.add(this.field_password_vault_path);
 
         this.ui.add(this.field_preview_size);
         this.ui.add(this.field_confirm_clear_toggle);
@@ -373,6 +385,7 @@ class Settings {
     #shortcuts = {
         [PrefsFields.BINDING_PRIVATE_MODE]: _("Private mode"),
         [PrefsFields.BINDING_TOGGLE_MENU]: _("Toggle the menu"),
+        [PrefsFields.BINDING_TOGGLE_PASSWORD_VAULT]: _("Toggle Password Vault"),
         [PrefsFields.BINDING_CLEAR_HISTORY]: _("Clear history"),
         [PrefsFields.BINDING_PREV_ENTRY]: _("Previous entry"),
         [PrefsFields.BINDING_NEXT_ENTRY]: _("Next entry")

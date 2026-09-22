@@ -43,4 +43,6 @@ export const PrefsFields = {
     SHOW_PIN_BUTTON                 : 'show-pin-button',
     SHOW_EDIT_BUTTON                : 'show-edit-button',
     SHOW_PREVIEW_BUTTON             : 'show-preview-button',
+    PASSWORD_VAULT_PATH             : 'password-vault-path',
+    BINDING_TOGGLE_PASSWORD_VAULT   : 'toggle-password-vault',
 };

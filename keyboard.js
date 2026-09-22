@@ -2,29 +2,51 @@ import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 export class Keyboard {
-    #device;
+    #device = null;
     #contentPurpose;
 
     constructor () {
-        let seat = Clutter.get_default_backend().get_default_seat();
-        this.#device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        try {
+            let seat = Clutter.get_default_backend()?.get_default_seat();
+            if (seat && typeof seat.create_virtual_device === 'function') {
+                this.#device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+            }
+        } catch (e) {
+            console.warn('Clipboard Indicator: failed to create virtual keyboard device', e);
+        }
 
-        Main.inputMethod.connectObject('notify::content-purpose', (method) => {
-            this.#contentPurpose = method.content_purpose;
-        }, this);
+        try {
+            Main.inputMethod.connectObject('notify::content-purpose', (method) => {
+                this.#contentPurpose = method.content_purpose;
+            }, this);
+        } catch (e) {
+            console.warn('Clipboard Indicator: failed to connect inputMethod notify', e);
+        }
     }
 
     destroy () {
-        Main.inputMethod.disconnectObject(this);
-        this.#device.run_dispose();
+        try {
+            Main.inputMethod.disconnectObject(this);
+        } catch (e) {}
+        if (this.#device) {
+            try {
+                this.#device.run_dispose();
+            } catch (e) {}
+            this.#device = null;
+        }
     }
 
     #notify (key, state) {
-        this.#device.notify_keyval(
-            Clutter.get_current_event_time() * 1000,
-            key,
-            state
-        );
+        if (!this.#device) return;
+        try {
+            this.#device.notify_keyval(
+                Clutter.get_current_event_time() * 1000,
+                key,
+                state
+            );
+        } catch (e) {
+            console.warn('Clipboard Indicator: notify_keyval failed', e);
+        }
     }
 
     get purpose () {
