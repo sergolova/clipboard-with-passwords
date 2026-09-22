@@ -70,7 +70,7 @@ let SHOW_PIN_BUTTON = true;
 let SHOW_EDIT_BUTTON = true;
 let SHOW_PREVIEW_BUTTON = true;
 let COLORIZE_CLIPBOARD = true;
-let FETCH_YOUTUBE_TITLES = true;
+let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
 let VAULT_COPY_TO_HISTORY = false;
 
@@ -114,6 +114,15 @@ const ClipboardIndicator = GObject.registerClass({
         this._destroyNotifSource();
         this._destroyAutoLock();
         this.dialogManager.destroy();
+        // Iterate a copy: close() fires 'closed', which splices the dialog
+        // out of _vaultDialogs and (with destroyOnClose) destroys it.
+        for (const dialog of this._vaultDialogs.slice()) {
+            try {
+                dialog.close();
+            } catch (e) {
+            }
+        }
+        this._vaultDialogs = [];
         this.keyboard.destroy();
         this._cursorActor.destroy();
         this._cursorActor = null;
@@ -219,6 +228,7 @@ const ClipboardIndicator = GObject.registerClass({
         if (CLEAR_ON_BOOT) this.registry.clearCacheFolder();
 
         this.dialogManager = new DialogManager();
+        this._vaultDialogs = [];
         this._buildMenu().then(() => {
             if (this._destroyed) {
                 return;
@@ -507,7 +517,8 @@ const ClipboardIndicator = GObject.registerClass({
                     }
                 },
                 closeMenuCallback,
-                this.extension.settings
+                this.extension.settings,
+                (dialog) => this._registerVaultDialog(dialog)
             );
             this.menu.addMenuItem(this.passwordVaultMenuSection);
         }
@@ -1876,6 +1887,16 @@ const ClipboardIndicator = GObject.registerClass({
         this._bindShortcut(PrefsFields.BINDING_TOGGLE_PASSWORD_VAULT, this.openPasswordVault);
     }
 
+    _registerVaultDialog(dialog) {
+        this._vaultDialogs.push(dialog);
+        dialog.connect('closed', () => {
+            const i = this._vaultDialogs.indexOf(dialog);
+            if (i !== -1) {
+                this._vaultDialogs.splice(i, 1);
+            }
+        });
+    }
+
     async openPasswordVault() {
         if (!VAULT_ENABLED) {
             return;
@@ -1905,16 +1926,23 @@ const ClipboardIndicator = GObject.registerClass({
                 _('Enter the master password to unlock:'),
                 async (pwd) => {
                     // Let exceptions reach the dialog: it displays e.message.
+                    if (this._destroyed) {
+                        return false;
+                    }
                     await this.vaultManager.unlock(pwd);
                     this._unlockedVaultPath = this.vaultManager.zipPath;
                     return true;
                 }
             );
             dialog.connect('closed', () => {
+                if (this._destroyed) {
+                    return;
+                }
                 if (this.vaultManager.isUnlocked()) {
                     this._showVaultMenu();
                 }
             });
+            this._registerVaultDialog(dialog);
             dialog.open();
         } else {
             this._showVaultMenu();

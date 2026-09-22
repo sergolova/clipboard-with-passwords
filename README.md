@@ -22,7 +22,7 @@ Clipboard entries are detected and visually distinguished by their content type,
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
 
-For copied **YouTube links**, the video title is fetched via the YouTube oEmbed API and shown under the URL — this is also a setting («Fetch YouTube video titles»), so network requests can be disabled entirely.
+For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
 
 ### 🛡️ Protect pinned items
 Pinned (favorite) text items can be flagged as a **password** with a single click (`Mark as password`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.
@@ -34,7 +34,8 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 - Access is protected by a **master password**.
 
 > 🖱️ **Left-click** on the panel icon opens the regular clipboard list; **right-click**
-> opens the password vault (the `Super+Shift+P` hotkey does the same). The whole
+> opens the password vault (or use the «Toggle Password Vault» shortcut — it has
+> **no default keybinding**, assign one in the extension settings). The whole
 > vault feature can be turned off in the settings («Enable password vault»).
 
 > ⚠️ **«Add vault copies to clipboard history»** — everything copied from the
@@ -62,10 +63,12 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 ## Requirements
 
 - **GNOME Shell 46 – 50**
-- **7-Zip** (`7z` command) — used to encrypt and decrypt the vault archive.
-  - Ubuntu / Debian: `sudo apt install p7zip-full`
-  - Fedora: `sudo dnf install p7zip`
-  - Arch Linux: `sudo pacman -S p7zip`
+- **7-Zip** — used to encrypt and decrypt the vault archive. The extension looks
+  for the `7z` command first, then falls back to `7za` (both work with the encrypted
+  ZIP format; `7zr` does **not** support ZIP and is ignored).
+  - Ubuntu / Debian: `sudo apt install p7zip-full` (provides `7z`; `p7zip` provides `7za`)
+  - Fedora: `sudo dnf install p7zip` (provides `7za` and `7zr`)
+  - Arch Linux: `sudo pacman -S p7zip` (provides `7z` and `7za`)
 - Paste buttons inside dialogs work on **X11** (on Wayland the standard clipboard flow is used).
 
 ## Installation
@@ -87,7 +90,14 @@ Then restart the shell (`Alt+F2` → `r`) or log out and back in, and enable the
 ## 🔐 The vault archive
 
 The vault is a standard encrypted ZIP archive that contains a single `passwords.json` file.
-The extension uses the `7z` command for both encryption and decryption.
+The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
+Keep the archive file (`passwords.zip`) in a **protected location** — do not put it in
+a world-readable directory. Anyone with read access to the file can attempt to crack it,
+and the `.bak` copy next to it contains it too.
+
+> 🔐 **The master password is never passed on the 7z command line.** The vault
+> hands it to `7z` through the process's **stdin** (and the `-p` switch without a
+> value), so it never shows up in the process list (`ps aux` / `journalctl`).
 
 Working with the archive manually:
 
@@ -154,10 +164,10 @@ Field reference:
 ## 🔑 Master password & session lifecycle
 
 **When the master password is requested.** The password is asked only when the
-vault is opened (`Super+Shift+P`, right-click the panel icon, or the menu item)
-and is **not unlocked yet**. The vault stays unlocked in memory for the whole
-session — until one of the events below — so you are **not** prompted on every
-open.
+vault is opened (the «Toggle Password Vault» shortcut, right-click the panel
+icon, or the menu item) and is **not unlocked yet**. The vault stays unlocked in
+memory for the whole session — until one of the events below — so you are **not**
+prompted on every open.
 
 **Screen lock & suspend.** The vault is **auto-locked** when the screen locks
 (wallpaper / `Super+L`) and when the machine goes to sleep: the vault menu (if
@@ -189,7 +199,7 @@ cp ~/.config/clipboard-indicator/passwords.zip.bak ~/.config/clipboard-indicator
 **Invalid path or a write-protected file.** If the «Password vault file path»
 setting points somewhere that cannot be used — a directory instead of a file,
 a folder that cannot be created, a read-only file or directory, or a missing
-`7z` binary — the unlock dialog shows a clear message instead of a generic
+`7z`/`7za` binary — the unlock dialog shows a clear message instead of a generic
 failure (bad paths also make every save attempt show a notification with the
 reason). Fix the path in the extension settings and try again.
 
@@ -202,11 +212,11 @@ Compared to the original extension, these settings were added:
 | `password-vault-path` | string | `~/.config/clipboard-indicator/passwords.zip` | Path to the encrypted vault ZIP archive |
 | `vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
-| `toggle-password-vault` | keybinding | `<Super><Shift>p` | Shortcut to open/close the password vault menu |
+| `toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
 | `vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
 | `vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |
 | `colorize-clipboard` | boolean | `true` | Colorize clipboard entries by content type |
-| `fetch-youtube-titles` | boolean | `true` | Fetch and show YouTube video titles for copied links |
+| `fetch-youtube-titles` | boolean | `false` | Fetch and show YouTube video titles for copied links. ⚠️ Enabling this sends the copied YouTube link (clipboard data) to a third party — `https://www.youtube.com/oembed` |
 
 ## 🛠 Development
 

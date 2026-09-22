@@ -50,6 +50,31 @@ export function resolveVaultPath(pathStr) {
     return pathStr;
 }
 
+// Archive backends to use for the encrypted ZIP vault, in order of
+// preference. The full `7z` (p7zip-full) is the primary backend; the
+// standalone `7za` (p7zip) is used as a fallback when `7z` is absent.
+// `7zr` is deliberately NOT probed: it only understands the native .7z
+// format and reports "Unsupported archive type" for ZIP archives.
+const ARCHIVE_BINARIES = ['7z', '7za'];
+
+// Cached so we don't re-probe PATH on every unlock/save. Only a *found*
+// binary is cached — a null result is re-probed each time so a binary
+// installed after the shell started is picked up.
+let _archiveBinary = null;
+
+function resolveArchiveBinary() {
+    if (_archiveBinary) {
+        return _archiveBinary;
+    }
+    for (const name of ARCHIVE_BINARIES) {
+        if (GLib.find_program_in_path(name)) {
+            _archiveBinary = name;
+            return name;
+        }
+    }
+    return null;
+}
+
 export class PasswordVaultManager {
     constructor(zipPath) {
         this.zipPath = resolveVaultPath(zipPath);
@@ -104,20 +129,31 @@ export class PasswordVaultManager {
             throw new Error(_('The password vault file is read-only and cannot be updated.') + '\n' + this.zipPath);
         }
 
+        const archiveBinary = resolveArchiveBinary();
+        if (!archiveBinary) {
+            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+        }
+
         let proc;
         try {
             proc = new Gio.Subprocess({
-                argv: ['7z', 'x', `-p${password}`, '-so', this.zipPath],
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                // No `-p` here: for an encrypted archive 7-Zip asks for the
+                // password and reads it from stdin. Passing the master
+                // password on the command line (argv) would leak it into the
+                // process list (`ps aux`), so it is sent via the stdin pipe.
+                argv: [archiveBinary, 'x', '-so', this.zipPath],
+                flags: Gio.SubprocessFlags.STDIN_PIPE |
+                       Gio.SubprocessFlags.STDOUT_PIPE |
+                       Gio.SubprocessFlags.STDERR_PIPE
             });
             proc.init(null);
         } catch (e) {
             // Gio.Subprocess throws when the binary cannot be spawned.
-            throw new Error(_('7-Zip (7z) is not installed.') + '\n' + _('Install 7-Zip and restart the shell.'));
+            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
 
         return new Promise((resolve, reject) => {
-            proc.communicate_utf8_async(null, null, (proc, res) => {
+            proc.communicate_utf8_async(`${password}\n`, null, (proc, res) => {
                 try {
                     const [, stdout, stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
@@ -206,19 +242,29 @@ export class PasswordVaultManager {
             }
         }
 
+        const archiveBinary = resolveArchiveBinary();
+        if (!archiveBinary) {
+            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+        }
+
         let proc;
         try {
             proc = new Gio.Subprocess({
-                argv: ['7z', 'a', '-tzip', `-p${this.masterPassword}`, '-y', this.zipPath, passwordsJsonPath],
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                // `-p` with no value makes 7-Zip read the password from
+                // stdin, so the master password never appears in argv /
+                // the process list.
+                argv: [archiveBinary, 'a', '-tzip', '-p', '-y', this.zipPath, passwordsJsonPath],
+                flags: Gio.SubprocessFlags.STDIN_PIPE |
+                       Gio.SubprocessFlags.STDOUT_PIPE |
+                       Gio.SubprocessFlags.STDERR_PIPE
             });
             proc.init(null);
         } catch (e) {
-            throw new Error(_('7-Zip (7z) is not installed.') + '\n' + _('Install 7-Zip and restart the shell.'));
+            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
 
         return new Promise((resolve, reject) => {
-            proc.communicate_utf8_async(null, null, (proc, res) => {
+            proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc, res) => {
                 try {
                     passwordsJsonFile.delete(null);
                     tmpSubDirFile.delete(null);

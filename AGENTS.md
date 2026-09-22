@@ -70,12 +70,27 @@ navigation, URL metadata, etc.) it adds:
   | `vault-hide-all-category` | `false` |
   | `vault-copy-to-history` | `false` |
   | `colorize-clipboard` | `true` |
-  | `fetch-youtube-titles` | `true` |
+  | `fetch-youtube-titles` | `false` |
+  (Off by default: enabling it sends copied YouTube links to a third party — `https://www.youtube.com/oembed`.)
 - `VAULT_ENABLED` guards `openPasswordVault()` (early return); `_onSettingsChange`
   drops back to the history view when the vault is disabled while open.
   `VAULT_COPY_TO_HISTORY` makes vault copies go through the normal clipboard
   watcher (no `ignoreNextClipboardChange`) so they land in the visible history —
   intentionally insecure, default off, warning shown in prefs/README.
+- **No default keybindings** — `toggle-menu` and `toggle-password-vault` ship
+  as empty arrays (`[]` in `gschema.xml`) to comply with EGO review guidelines
+  (MUST NOT bind non-empty defaults that reveal clipboard/password data). Users
+  assign shortcuts in Settings → Shortcuts; `enable-keybindings` stays `true`.
+- **7z master password travels via stdin, never argv.** The vault spawns
+  `7z x -so` (no `-p`) and `7z a -tzip -p -y` (empty `-p`) and writes the
+  master password to the subprocess stdin (`communicate_utf8_async`), so it
+  never appears in `ps aux`/`journalctl`.
+- **Archive backend fallback:** `passwordVault.js` probes `7z` first and
+  falls back to `7za` (`resolveArchiveBinary()`, cached on success only).
+  `7zr` is **not** a candidate (it can't read/write ZIP — «Unsupported
+  archive type»); the `p7zip` executable is a gzip-style wrapper and is not
+  used either. The not-installed error text must list both supported
+  binaries (`7-Zip (7z or 7za) is not installed.`).
 - **Master password life cycle:**
   - Asked only when opening the vault while it is **not unlocked**;
     afterwards the vault stays unlocked in memory for the session.
@@ -92,6 +107,14 @@ navigation, URL metadata, etc.) it adds:
   memory and the next save recreates the archive; while locked, unlock creates
   a new empty vault — the previous `.bak` (`passwords.zip.bak`) can restore it.
 - **Hide-All privacy mode** also hides the counts on category buttons.
+- **Vault dialogs are tracked for `disable()`.** `MasterPasswordDialog` and
+  `ServiceEditDialog` are registered in `ClipboardIndicator._vaultDialogs`
+  (`_registerVaultDialog()`; `PasswordVaultMenuSection` gets a `dialogTracker`
+  callback for the service editor). `destroy()` iterates a **copy** of the
+  registry and `close()`s each dialog. Both dialog classes call
+  `super._init({ destroyOnClose: true })` so a normally-closed dialog destroys
+  itself instead of lingering hidden in `Main.uiGroup`. Any new modal dialog in
+  the extension must be registered the same way.
 
 ## File map
 
@@ -140,7 +163,7 @@ navigation, URL metadata, etc.) it adds:
   print(t.gettext('YOUR NEW STRING'))
   EOF
   ```
-- Deployed `ru.mo` and `uk.mo` each have 181 entries; the extension `locale/`
+- Deployed `ru.mo` and `uk.mo` each have 183 entries; the extension `locale/`
   is live via the install symlink. The `uk.po` was fully re-translated
   (regenerated from the pot); edit it in place and rebuild `uk.mo` with
   `tools/mo_writer.py`.

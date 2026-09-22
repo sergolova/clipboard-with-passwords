@@ -266,7 +266,7 @@ class Settings {
 
         this.field_fetch_youtube_titles = new Adw.SwitchRow({
             title: _("Fetch YouTube video titles"),
-            subtitle: _("Show the video title for copied YouTube links")
+            subtitle: _("Warning: enabling this sends YouTube links copied to the clipboard (clipboard data) to a third party — https://www.youtube.com/oembed")
         });
 
         this.field_vault_enabled = new Adw.SwitchRow({
@@ -308,6 +308,15 @@ class Settings {
         this.item_actions = new Adw.PreferencesGroup({ title: _('Item Actions') });
         this.password_vault = new Adw.PreferencesGroup({ title: _('Password Vault Settings') });
 
+        this.field_vault_requirements_warning = new Adw.ActionRow({
+            title: _('Required: 7-Zip (7z or 7za)'),
+            subtitle: _('The vault is an encrypted ZIP archive. To open and save it the extension needs 7-Zip: install p7zip-full (7z) or p7zip (7za). Keep the archive file in a protected location.'),
+            activatable: false,
+            selectable: false
+        });
+        this.field_vault_requirements_warning.add_prefix(new Gtk.Image({ iconName: 'dialog-warning-symbolic' }));
+
+        this.password_vault.add(this.field_vault_requirements_warning);
         this.password_vault.add(this.field_vault_enabled);
         this.password_vault.add(this.field_password_vault_path);
         this.password_vault.add(this.field_vault_pin_recent);

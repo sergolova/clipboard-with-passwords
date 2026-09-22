@@ -13,33 +13,40 @@ import St from 'gi://St';
  */
 export function isDarkTheme() {
     try {
-        // Authoritative: the *foreground* color of the root theme node. On
-        // Adwaita-dark this is `#ffffff`, on Adwaita-light `#282828`.
-        // NB: get_color('color') on a light theme resolves to the background
-        // (#fafafa -> high luminance), which made every light shell look
-        // "dark" — always use get_foreground_color() instead.
+        // 1. ПЕРВИЧНЫЙ ЗОНД: АНАЛИЗ ЦВЕТА ТЕКСТА КОРНЕВОГО УЗЛА (Root Theme Node)
+        // В GNOME Shell (St) каналы Clutter.Color находятся в диапазоне 0..255 (а не 0..1).
+        // На тёмных темах цвет текста (foreground) светлый (luminance > 128),
+        // на светлых темах (Adwaita/Yaru Light) — тёмный (luminance <= 128).
         const context = St.ThemeContext.get_for_stage(global.stage);
         const node = context.get_root_node();
-        const color = node.get_foreground_color(); // Clutter.Color, channels 0..1
+        const color = node.get_foreground_color(); // Возвращает Clutter.Color
+
         const luminance = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue;
-        _logTheme(`isDarkTheme: root fg luminance=${luminance.toFixed(3)} -> ${luminance > 0.5}`);
-        return luminance > 0.5;
+        const isDark = luminance > 128;
+
+        return isDark;
     } catch (e) {
-        _logTheme(`isDarkTheme: theme-node probe failed (${e}); fallback via color_scheme`);
         try {
-            return St.Settings.get().color_scheme === St.SystemColorScheme.PREFER_DARK;
+            // 2. ВТОРИЧНЫЙ ЗОНД: ПРОВЕРКА СИСТЕМНОЙ НАСТРОЙКИ (St.Settings)
+            const scheme = St.Settings.get().color_scheme;
+
+            // Если явно указано PREFER_LIGHT — это светлая тема
+            if (scheme === St.SystemColorScheme.PREFER_LIGHT) {
+                return false;
+            }
+
+            // Если явно указано PREFER_DARK — это тёмная тема
+            if (scheme === St.SystemColorScheme.PREFER_DARK) {
+                return true;
+            }
+
+            // 3. ОБРАБОТКА 'DEFAULT' (например, стандартная Ubuntu / Yaru, где 'default' = светлая)
+            // DEFAULT не считается строго тёмной. Безопаснее отдать false (светлую),
+            // либо подвязаться на дефолт вашей целевой системы.
+            return false;
         } catch (e2) {
-            _logTheme('isDarkTheme: St.Settings probe failed; defaulting to dark');
             return true;
         }
-    }
-}
-
-/** Minimal diagnostics so the active scheme is visible in `journalctl`. */
-function _logTheme(msg) {
-    try {
-        global.log(`[clipboard-with-passwords] ${msg}`);
-    } catch (e) {
     }
 }
 

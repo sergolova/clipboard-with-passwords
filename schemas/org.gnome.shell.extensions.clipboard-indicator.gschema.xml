@@ -171,7 +171,7 @@
       <summary>Add everything copied from the vault to the visible clipboard history. WARNING: this stores passwords and logins in the plain-text clipboard list, which is insecure. Keep it off unless you understand the risk.</summary>
     </key>
     <key name="toggle-password-vault" type="as">
-      <default>['&lt;Super&gt;&lt;Shift&gt;p']</default>
+      <default>[]</default>
       <summary>Toggle password vault hotkey</summary>
     </key>
     <key name="vault-pin-recent" type="b">
@@ -187,12 +187,12 @@
       <summary>Colorize clipboard entries by content type</summary>
     </key>
     <key name="fetch-youtube-titles" type="b">
-      <default>true</default>
-      <summary>Fetch and show YouTube video titles for copied links</summary>
+      <default>false</default>
+      <summary>Fetch and show YouTube video titles for copied links. WARNING: enabling this sends copied YouTube links (clipboard data) to a third-party service — https://www.youtube.com/oembed</summary>
     </key>
 
     <key name="toggle-menu" type="as">
-      <default>['&lt;Super&gt;&lt;Shift&gt;v']</default>
+      <default>[]</default>
       <summary>Toggle menu hotkey</summary>
     </key>
     <key name="clear-history" type="as">

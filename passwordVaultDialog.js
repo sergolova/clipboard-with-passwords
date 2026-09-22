@@ -39,7 +39,7 @@ function createPasteButton(entry) {
 export const MasterPasswordDialog = GObject.registerClass(
     class MasterPasswordDialog extends ModalDialog.ModalDialog {
         _init(title, message, callback) {
-            super._init();
+            super._init({ destroyOnClose: true });
 
             let mainBox = new St.BoxLayout({
                 vertical: true,
@@ -136,7 +136,7 @@ export const MasterPasswordDialog = GObject.registerClass(
 export const ServiceEditDialog = GObject.registerClass(
     class ServiceEditDialog extends ModalDialog.ModalDialog {
         _init(serviceItem, existingCategories, onSave, onDelete, focusFieldName = 'name') {
-            super._init();
+            super._init({ destroyOnClose: true });
 
             this.serviceId = serviceItem ? serviceItem.id : null;
             this.focusTargetWidget = null;

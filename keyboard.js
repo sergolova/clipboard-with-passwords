@@ -30,6 +30,10 @@ export class Keyboard {
         } catch (e) {}
         if (this.#device) {
             try {
+                // run_dispose() is required here: the virtual keyboard device
+                // was explicitly created via seat.create_virtual_device() and
+                // owns backend resources. Plain destroy()/unref would leak
+                // the Clutter device, so we must dispose it explicitly.
                 this.#device.run_dispose();
             } catch (e) {}
             this.#device = null;

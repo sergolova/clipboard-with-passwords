@@ -10,7 +10,7 @@ import { ALL_CATEGORY } from './passwordVault.js';
 import { themeColors } from './theme.js';
 
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
-    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null) {
+    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null, dialogTracker = null) {
         super();
 
         this.vaultManager = vaultManager;
@@ -18,6 +18,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.refreshCallback = refreshCallback; // fn() to refresh UI
         this.closeMenuCallback = closeMenuCallback; // fn() to close popup menu
         this.settings = extensionSettings;
+        this.dialogTracker = dialogTracker; // fn(dialog) -> register an open vault dialog
 
         this.currentQuery = '';
         this.selectedCategory = ALL_CATEGORY;
@@ -563,6 +564,9 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             },
             focusFieldName
         );
+        if (this.dialogTracker) {
+            this.dialogTracker(dialog);
+        }
         dialog.open();
     }
 
