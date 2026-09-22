@@ -98,6 +98,8 @@ navigation, URL metadata, etc.) it adds:
 | File | Purpose |
 | --- | --- |
 | `extension.js` | Main indicator: clipboard tracking, menu, type styles (`_updateTypeStyle()`), YouTube oEmbed gate, vault wiring, auto-lock |
+| `theme.js` | Theme detection (`isDarkTheme()`), `themeClass()` (`ci-theme-dark`/`ci-theme-light`), `themeColors()` palette (DARK/LIGHT) — the single source for all text/swatch/card colors |
+| `stylesheet.css` | Scoped CSS rules incl. theme-variant overrides (`.ci-theme-light …`) and the visible pinned/history separator |
 | `passwordVault.js` | `PasswordVaultManager`, `ALL_CATEGORY`, `generatePassword()`, `resolveVaultPath()`, 7z I/O, sanitize, path/writability checks |
 | `passwordVaultMenu.js` | Vault UI: cards, filter bar, category buttons, service row callbacks, `_notifySaveError()` |
 | `passwordVaultDialog.js` | `MasterPasswordDialog`, `ServiceEditDialog`, paste-button helper |

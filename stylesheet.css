@@ -2,6 +2,10 @@
     color: rgba(255,255,255,0.3);
 }
 
+.clipboard-indicator-hbox.private-mode.ci-theme-light {
+    color: rgba(0,0,0,0.35);
+}
+
 .ci-notification-label {
     font-weight: bold;
     color: #ffffff;
@@ -31,6 +35,10 @@
     color:#aaa;
 }
 
+.ci-theme-light .clipboard-indicator-empty-state {
+    color:#6a6a6a;
+}
+
 .clipboard-indicator-empty-state StIcon {
     icon-size:5em;
     margin-top:3em;
@@ -52,6 +60,10 @@
     color: rgba(255,255,255,0.3);
 }
 
+.ci-theme-light .ci-main-menu-section StButton.ci-pin-btn {
+    color: rgba(0,0,0,0.35);
+}
+
 .clipboard-hidden {
     display:none!important;
 }
@@ -71,11 +83,19 @@
     padding:0;
 }
 
+.ci-theme-light .clipboard-menu-img-preview {
+    border-color: rgba(0,0,0,0.35);
+}
+
 .clipboard-indicator-img-preview {
     border:solid 1px white;
     width:1em;
     height:1em;
     margin-right:.25em;
+}
+
+.ci-theme-light .clipboard-indicator-img-preview {
+    border-color: rgba(0,0,0,0.35);
 }
 
 .clipboard-indicator-hbox {
@@ -95,11 +115,20 @@
     margin: 0 6px;
 }
 
+.ci-theme-light .ci-tag-label {
+    color: rgba(0, 0, 0, 0.65);
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
 .ci-edit-textbox {
     background-color: rgba(255, 255, 255, 0.1);
     border-radius: 4px;
     padding: 8px;
     min-width: 384px;
+}
+
+.ci-theme-light .ci-edit-textbox {
+    background-color: rgba(0, 0, 0, 0.06);
 }
 
 /* Type-based item styling */
@@ -124,12 +153,24 @@
     color: #ff4747;
 }
 
+.ci-theme-light .clipboard-type-file {
+    color: #c83333;
+}
+
 .clipboard-type-email {
     color: #da9d10;
 }
 
+.ci-theme-light .clipboard-type-email {
+    color: #9c6f00;
+}
+
 .clipboard-type-url {
     color: #3cb4ff;
+}
+
+.ci-theme-light .clipboard-type-url {
+    color: #1871a5;
 }
 
 .clipboard-type-password {
@@ -137,7 +178,36 @@
     background-color: rgba(230, 115, 0, 0.08);
 }
 
+.ci-theme-light .clipboard-type-password {
+    color: #b25a00;
+    background-color: rgba(230, 115, 0, 0.1);
+}
+
 .clipboard-second-line {
     font-size: 0.85em;
     color: rgb(76 76 76);
+}
+
+.ci-theme-light .clipboard-second-line {
+    color: rgb(52 52 52);
+}
+
+/* Visible divider between the pinned/favorites list and the regular history.
+   The stock separator is a nearly invisible 1px tint; make it an explicit
+   line with a small margin so the two lists are clearly separated. */
+.clipboard-indicator-menu .popup-separator-menu-item {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    margin: 2px 8px;
+}
+
+.clipboard-indicator-menu .popup-separator-menu-item .popup-separator-menu-item-separator {
+    height: 1px;
+    min-height: 1px;
+    border-radius: 1px;
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+.clipboard-indicator-menu.ci-theme-light .popup-separator-menu-item .popup-separator-menu-item-separator {
+    background-color: rgba(0, 0, 0, 0.3);
 }

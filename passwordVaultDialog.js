@@ -4,6 +4,7 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import { generatePassword } from './passwordVault.js';
+import { themeColors } from './theme.js';
 
 // Button that inserts the CLIPBOARD text into `entry`:
 // - if the entry currently has key focus, inserts at the cursor (like Ctrl+V);
@@ -55,7 +56,7 @@ export const MasterPasswordDialog = GObject.registerClass(
             mainBox.add_child(titleLabel);
 
             let msgLabel = new St.Label({
-                style: 'font-size: 12px; color: #888888;',
+                style: `font-size: 12px; color: ${themeColors().secondary};`,
                 x_align: Clutter.ActorAlign.CENTER,
                 text: message || _('Enter the master password to unlock:')
             });
@@ -73,7 +74,7 @@ export const MasterPasswordDialog = GObject.registerClass(
             mainBox.add_child(pwdEntryBox);
 
             this.errorLabel = new St.Label({
-                style: 'color: #ff5555; font-size: 12px;',
+                style: `color: ${themeColors().error}; font-size: 12px;`,
                 x_align: Clutter.ActorAlign.CENTER,
                 text: ''
             });
@@ -172,6 +173,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 catBtnsContainer.add_child(currentRowBox);
 
                 let currentWidth = 0;
+                const c = themeColors();
                 existingCategories.forEach(cat => {
                     const isSelected = cat === initialCategory;
                     let catBtn = new St.Button({
@@ -179,7 +181,7 @@ export const ServiceEditDialog = GObject.registerClass(
                         style_class: 'button',
                         can_focus: false,
                         style: `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
-                            isSelected ? 'background-color: #3584e4; color: #ffffff; font-weight: bold;' : 'background-color: rgba(255,255,255,0.1); color: #eeeeee;'
+                            isSelected ? `background-color: ${c.catBgSelected}; color: ${c.catTextSelected}; font-weight: bold;` : `background-color: ${c.catBg}; color: ${c.catText};`
                         }`
                     });
                     this.editCategoryButtons.push({ cat, btn: catBtn });
@@ -404,10 +406,11 @@ export const ServiceEditDialog = GObject.registerClass(
 
         _updateEditCategoryButtonsUI(activeCat) {
             if (!this.editCategoryButtons) return;
+            const c = themeColors();
             this.editCategoryButtons.forEach(({ cat, btn }) => {
                 const isSelected = cat === activeCat;
                 btn.style = `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
-                    isSelected ? 'background-color: #3584e4; color: #ffffff; font-weight: bold;' : 'background-color: rgba(255,255,255,0.1); color: #eeeeee;'
+                    isSelected ? `background-color: ${c.catBgSelected}; color: ${c.catTextSelected}; font-weight: bold;` : `background-color: ${c.catBg}; color: ${c.catText};`
                 }`;
             });
         }
@@ -419,7 +422,7 @@ export const ServiceEditDialog = GObject.registerClass(
 
             box.add_child(new St.Label({
                 text: _('Delete service'),
-                style: 'font-weight: bold; font-size: 15px; color: #ff5555;',
+                style: `font-weight: bold; font-size: 15px; color: ${themeColors().error};`,
                 x_align: Clutter.ActorAlign.CENTER
             }));
 
@@ -474,7 +477,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 label: '✖',
                 style_class: 'button',
                 can_focus: false,
-                style: 'padding: 2px 6px; color: #ff5555;'
+                style: `padding: 2px 6px; color: ${themeColors().error};`
             });
 
             rowBox.add_child(labelEntry);

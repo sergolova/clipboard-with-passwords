@@ -23,6 +23,7 @@ import {UrlMetadataManager} from './urlMetadataManager.js';
 import {PasswordVaultManager} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
+import {themeClass, themeColors} from './theme.js';
 
 const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
@@ -180,6 +181,17 @@ const ClipboardIndicator = GObject.registerClass({
         });
 
         this.hbox = hbox;
+        // Theme marker for stylesheet.css rules that must differ between the
+        // dark and light shell variants (private-mode dimming, separator, ...).
+        hbox.add_style_class_name(themeClass());
+        log(`[clipboard-with-passwords] themeClass=${themeClass()} text=${themeColors().text} cardBg=${themeColors().cardBg}`);
+
+        // Popup menu box: scope + theme marker for CSS rules that can't be
+        // expressed inline (separator line, tag labels, pin buttons, type
+        // colors, second line, empty state). Re-applied on scheme change in
+        // _applyThemeClasses().
+        this.menu.box.add_style_class_name('clipboard-indicator-menu');
+        this.menu.box.add_style_class_name(themeClass());
 
         this.icon = new St.Icon({
             icon_name: INDICATOR_ICON,
@@ -549,6 +561,12 @@ const ClipboardIndicator = GObject.registerClass({
         if (this.scrollViewFavoritesMenuSection?.actor) this.scrollViewFavoritesMenuSection.actor.visible = true;
         if (this.scrollViewMenuSection?.actor) this.scrollViewMenuSection.actor.visible = true;
 
+        // Re-show the favorites/history separators we hid while in vault mode,
+        // otherwise the pinned↔history divider stays invisible after the first
+        // vault visit (visible is sticky until explicitly reset).
+        if (this.favoritesSeparator?.actor) this.favoritesSeparator.actor.visible = true;
+        if (this.historySeparator?.actor) this.historySeparator.actor.visible = true;
+
         // Remove empty-state if items exist
         if (this.clipItemsRadioGroup.length > 0 &&
             this.menu.box.contains(this.emptyStateSection)) {
@@ -783,7 +801,7 @@ const ClipboardIndicator = GObject.registerClass({
             });
 
             const swatch = new St.Widget({
-                style: `background-color: ${cssColor}; width: 36px; height: 18px; border: 1px solid rgba(255,255,255,0.4); border-radius: 2px; margin: 0 8px;`,
+                style: `background-color: ${cssColor}; width: 36px; height: 18px; border: 1px solid ${themeColors().swatchBorder}; border-radius: 2px; margin: 0 8px;`,
                 y_align: Clutter.ActorAlign.CENTER
             });
             box.add_child(swatch);
@@ -2281,6 +2299,7 @@ const ClipboardIndicator = GObject.registerClass({
 
     #showTagDialog(menuItem, reopenOnClose = false) {
         const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
+        dialog.contentLayout.add_style_class_name(themeClass());
 
         const onDialogClose = () => {
             if (reopenOnClose) {
@@ -2345,6 +2364,7 @@ const ClipboardIndicator = GObject.registerClass({
 
     #showEditDialog(menuItem, reopenOnClose = false) {
         const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
+        dialog.contentLayout.add_style_class_name(themeClass());
 
         const onDialogClose = () => {
             if (reopenOnClose) {
@@ -2375,9 +2395,17 @@ const ClipboardIndicator = GObject.registerClass({
         white.init_from_4f(1.0, 1.0, 1.0, 1.0);
         const selectionBlue = new Cogl.Color();
         selectionBlue.init_from_4f(0.39, 0.59, 1.0, 0.71);
-        clutterText.color = white;
+        // Text color must follow the active theme — hardcoding white makes the
+        // dialog unreadable on light shells.
+        const textColor = themeColors().text;
+        const tR = parseInt(textColor.slice(1, 3), 16) / 255;
+        const tG = parseInt(textColor.slice(3, 5), 16) / 255;
+        const tB = parseInt(textColor.slice(5, 7), 16) / 255;
+        const themeText = new Cogl.Color();
+        themeText.init_from_4f(tR, tG, tB, 1.0);
+        clutterText.color = themeText;
         clutterText.selection_color = selectionBlue;
-        clutterText.selected_text_color = white;
+        clutterText.selected_text_color = themeText;
 
         const textBox = new St.BoxLayout({
             style_class: 'ci-edit-textbox',

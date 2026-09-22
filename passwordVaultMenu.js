@@ -7,6 +7,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ServiceEditDialog } from './passwordVaultDialog.js';
 import { PrefsFields } from './constants.js';
 import { ALL_CATEGORY } from './passwordVault.js';
+import { themeColors } from './theme.js';
 
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null) {
@@ -78,13 +79,14 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         let currentRowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 4px;' });
         this.catWrapBox.add_child(currentRowBox);
 
+        const c = themeColors();
         let currentWidth = 0;
         categories.forEach(cat => {
             const labelText = this._categoryButtonLabel(cat);
             let btn = new St.Button({
                 label: labelText,
                 style_class: 'button',
-                style: 'padding: 2px 8px; font-size: 11px; border-radius: 4px; background-color: rgba(255,255,255,0.1); color: #eeeeee;'
+                style: `padding: 2px 8px; font-size: 11px; border-radius: 4px; background-color: ${c.catBg}; color: ${c.catText};`
             });
             this.categoryButtons.push({ cat, btn });
 
@@ -115,12 +117,13 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
     _updateCategoryButtonsUI() {
         if (!this.categoryButtons) return;
+        const c = themeColors();
         this.categoryButtons.forEach(({ cat, btn }) => {
             const isSelected = cat === this.selectedCategory;
             btn.set_label(this._categoryButtonLabel(cat));
             btn.style_class = isSelected ? 'button button-active' : 'button';
             btn.style = `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
-                isSelected ? 'background-color: #3584e4; color: #ffffff; font-weight: bold;' : 'background-color: rgba(255,255,255,0.1); color: #eeeeee;'
+                isSelected ? `background-color: ${c.catBgSelected}; color: ${c.catTextSelected}; font-weight: bold;` : `background-color: ${c.catBg}; color: ${c.catText};`
             }`;
         });
     }
@@ -160,7 +163,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         // 1. RECENT SERVICE BANNER (Зона последнего использованного сервиса)
         this.recentBox = new St.BoxLayout({
             vertical: true,
-            style: 'background-color: rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 8px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.15);'
+            style: `background-color: ${themeColors().bannerBg}; border-radius: 8px; padding: 8px; margin-bottom: 6px; border: 1px solid ${themeColors().bannerBorder};`
         });
         container.add_child(this.recentBox);
         this._updateRecentBanner();
@@ -245,7 +248,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         let recentNameLabel = new St.Label({
             text: recent.name,
-            style: 'font-weight: bold; font-size: 13px; color: #4af;',
+            style: `font-weight: bold; font-size: 13px; color: ${themeColors().accent};`,
             y_align: Clutter.ActorAlign.CENTER,
             x_align: Clutter.ActorAlign.START
         });
@@ -291,7 +294,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (items.length === 0) {
             let emptyLabel = new St.Label({
                 text: _('Vault is empty. Press + to add a service.'),
-                style: 'color: #888888; font-size: 12px; padding: 16px;',
+                style: `color: ${themeColors().hint}; font-size: 12px; padding: 16px;`,
                 x_align: Clutter.ActorAlign.CENTER
             });
             this.itemsBox.add_child(emptyLabel);
@@ -347,7 +350,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (showRevealHint && !this._revealHint) {
             this._revealHint = new St.Label({
                 text: _('Type to reveal services…'),
-                style: 'color: #888888; font-size: 12px; padding: 16px;',
+                style: `color: ${themeColors().hint}; font-size: 12px; padding: 16px;`,
                 x_align: Clutter.ActorAlign.CENTER
             });
             this.itemsBox.add_child(this._revealHint);
@@ -358,9 +361,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     }
 
     _createServiceCard(item) {
+        const c = themeColors();
         let card = new St.BoxLayout({
             vertical: true,
-            style: 'background-color: rgba(255, 255, 255, 0.04); border-radius: 6px; padding: 8px; border: 1px solid rgba(255,255,255,0.08);'
+            style: `background-color: ${c.cardBg}; border-radius: 6px; padding: 8px; border: 1px solid ${c.cardBorder};`
         });
 
         // Title bar: [категория] название
@@ -369,7 +373,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (item.category) {
             let catLabel = new St.Label({
                 text: `[${item.category}]`,
-                style: 'font-size: 11px; color: #888888;',
+                style: `font-size: 11px; color: ${c.secondary};`,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_align: Clutter.ActorAlign.START
             });
@@ -429,7 +433,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (item.description) {
             let descLabel = new St.Label({
                 text: item.description,
-                style: 'font-size: 12px; color: #bbbbbb; padding: 0 2px; margin-bottom: 2px;',
+                style: `font-size: 12px; color: ${c.desc}; padding: 0 2px; margin-bottom: 2px;`,
                 y_align: Clutter.ActorAlign.START,
                 x_align: Clutter.ActorAlign.START,
                 x_expand: true
@@ -477,7 +481,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         let labelWidget = new St.Label({
             text: `${labelStr}:`,
-            style: 'font-size: 11px; color: #aaaaaa;',
+            style: `font-size: 11px; color: ${themeColors().key};`,
             y_align: Clutter.ActorAlign.CENTER,
             x_align: Clutter.ActorAlign.START
         });
