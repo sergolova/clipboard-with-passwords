@@ -13,10 +13,10 @@ import St from 'gi://St';
  */
 export function isDarkTheme() {
     try {
-        // 1. ПЕРВИЧНЫЙ ЗОНД: АНАЛИЗ ЦВЕТА ТЕКСТА КОРНЕВОГО УЗЛА (Root Theme Node)
-        // В GNOME Shell (St) каналы Clutter.Color находятся в диапазоне 0..255 (а не 0..1).
-        // На тёмных темах цвет текста (foreground) светлый (luminance > 128),
-        // на светлых темах (Adwaita/Yaru Light) — тёмный (luminance <= 128).
+        // 1. INITIAL CHECK: ANALYSIS OF THE ROOT THEME NODE'S TEXT COLOR
+        // In GNOME Shell (St), Clutter.Color channels range from 0 to 255 (not 0 to 1).
+        // On dark themes, the text color (foreground) is light (luminance > 128),
+        // while on light themes (Adwaita/Yaru Light), it is dark (luminance <= 128).
         const context = St.ThemeContext.get_for_stage(global.stage);
         const node = context.get_root_node();
         const color = node.get_foreground_color(); // Возвращает Clutter.Color
@@ -27,22 +27,22 @@ export function isDarkTheme() {
         return isDark;
     } catch (e) {
         try {
-            // 2. ВТОРИЧНЫЙ ЗОНД: ПРОВЕРКА СИСТЕМНОЙ НАСТРОЙКИ (St.Settings)
+            // 2. SECONDARY PROBE: CHECKING SYSTEM SETTINGS (St.Settings)
             const scheme = St.Settings.get().color_scheme;
 
-            // Если явно указано PREFER_LIGHT — это светлая тема
+            // If PREFER_LIGHT is explicitly specified, this is a light theme
             if (scheme === St.SystemColorScheme.PREFER_LIGHT) {
                 return false;
             }
 
-            // Если явно указано PREFER_DARK — это тёмная тема
+            // If PREFER_DARK is explicitly specified, this is the dark theme
             if (scheme === St.SystemColorScheme.PREFER_DARK) {
                 return true;
             }
 
-            // 3. ОБРАБОТКА 'DEFAULT' (например, стандартная Ubuntu / Yaru, где 'default' = светлая)
-            // DEFAULT не считается строго тёмной. Безопаснее отдать false (светлую),
-            // либо подвязаться на дефолт вашей целевой системы.
+            // 3. HANDLING 'DEFAULT' (e.g., the standard Ubuntu / Yaru theme, where 'default' = light)
+            // 'DEFAULT' is not strictly considered dark. It’s safer to return `false` (light),
+            // or to use the default setting of your target system.
             return false;
         } catch (e2) {
             return true;

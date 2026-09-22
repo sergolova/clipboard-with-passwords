@@ -208,6 +208,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 hint_text: _('Category name (e.g. Work)')
             });
             this.categoryEntry.set_x_expand(true);
+            this._deferEditable(this.categoryEntry);
             this.categoryEntry.clutter_text.connect('text-changed', () => {
                 this._updateEditCategoryButtonsUI(this.categoryEntry.get_text());
             });
@@ -223,6 +224,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 hint_text: _('For example: GitHub')
             });
             this.nameEntry.set_x_expand(true);
+            this._deferEditable(this.nameEntry);
             nameEntryBox.add_child(this.nameEntry);
             nameEntryBox.add_child(createPasteButton(this.nameEntry));
             mainBox.add_child(nameEntryBox);
@@ -236,6 +238,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 hint_text: _('Description (optional)')
             });
             this.descEntry.set_x_expand(true);
+            this._deferEditable(this.descEntry);
             descEntryBox.add_child(this.descEntry);
             descEntryBox.add_child(createPasteButton(this.descEntry));
             mainBox.add_child(descEntryBox);
@@ -249,6 +252,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 hint_text: 'user@example.com'
             });
             this.loginEntry.set_x_expand(true);
+            this._deferEditable(this.loginEntry);
             loginEntryBox.add_child(this.loginEntry);
             loginEntryBox.add_child(createPasteButton(this.loginEntry));
             mainBox.add_child(loginEntryBox);
@@ -262,6 +266,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 hint_text: _('Password')
             });
             this.pwdEntry.set_x_expand(true);
+            this._deferEditable(this.pwdEntry);
             pwdBox.add_child(this.pwdEntry);
             if (focusFieldName === 'password') this.focusTargetWidget = this.pwdEntry;
 
@@ -358,6 +363,43 @@ export const ServiceEditDialog = GObject.registerClass(
             if (focusTarget) {
                 this.setInitialKeyFocus(focusTarget);
             }
+
+            // Background: an editable Clutter.Text pushes input-focus updates
+            // (set_cursor_location / set_surrounding) via update_cursor_location()
+            // whenever its text offsets change during an allocation, and both
+            // calls assert the text's input focus is attached (i.e. the text is
+            // the current key-focus holder). Flipping `editable` back on after
+            // the first allocation does NOT help: the editable and non-editable
+            // allocation branches compute different text offsets (TEXT_PADDING
+            // vs 0), so any state flip that is followed by another allocation
+            // re-trips the "clutter_input_focus_is_focused" criticals for every
+            // unfocused field. Instead the fields start out NON-editable - their
+            // cursor updates then bail out early - and become editable only on
+            // first user interaction (click, or the dialog's own tab/any-key
+            // handler). By then the input method is attached, so the assertions
+            // can't fire. The initial focus target stays editable from the
+            // start: it is focused at open, so its input focus is attached
+            // before its first allocation.
+            (this._deferEditableEntries || [])
+                .filter(e => e !== focusTarget)
+                .forEach(entry => {
+                    const ct = entry.clutter_text;
+                    ct.editable = false;
+                    ct.connect('button-press-event', () => {
+                        ct.editable = true;
+                    });
+                });
+            // DIAGNOSTIC (verification only, dropped at commit time): proves the
+            // deferred-editable code is actually running in this shell session.
+            // log(`[clipboard-with-passwords] service edit dialog: defer-editable armed (${(this._deferEditableEntries || []).length} entries)`);
+        }
+
+        // Registers an entry whose editable state should be left disabled until
+        // after its first allocation (see the comment in _init).
+        _deferEditable(entry) {
+            if (!entry || !entry.clutter_text) return;
+            if (!this._deferEditableEntries) this._deferEditableEntries = [];
+            this._deferEditableEntries.push(entry);
         }
 
 
@@ -382,6 +424,10 @@ export const ServiceEditDialog = GObject.registerClass(
             entries.forEach((entry) => {
                 if (entry && entry.clutter_text) {
                     entry.clutter_text.connect('key-press-event', (actor, event) => {
+                        // A keypress means the user is about to type here: make
+                        // the field editable right away (see _init). For real
+                        // Tab/Shift-Tab handling we also pre-enable the target.
+                        actor.editable = true;
                         const symbol = event.get_key_symbol();
                         const state = event.get_state();
 
@@ -393,6 +439,7 @@ export const ServiceEditDialog = GObject.registerClass(
                                 const nextIdx = isShift ? (curIdx - 1 + allEntries.length) % allEntries.length : (curIdx + 1) % allEntries.length;
                                 const nextEntry = allEntries[nextIdx];
                                 if (nextEntry && nextEntry.clutter_text) {
+                                    nextEntry.clutter_text.editable = true;
                                     global.stage.set_key_focus(nextEntry.clutter_text);
                                     return Clutter.EVENT_STOP;
                                 }
@@ -460,6 +507,8 @@ export const ServiceEditDialog = GObject.registerClass(
 
             let valueEntry = new St.Entry({ text: valueVal, hint_text: _('Value') });
             valueEntry.set_x_expand(true);
+            this._deferEditable(labelEntry);
+            this._deferEditable(valueEntry);
 
             if (isHidden) {
                 valueEntry.clutter_text.password_char = '•'.charCodeAt(0);

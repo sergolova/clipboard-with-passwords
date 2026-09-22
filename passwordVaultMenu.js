@@ -71,9 +71,17 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (this.selectedCategory !== ALL_CATEGORY && !categories.includes(this.selectedCategory)) {
             this.selectedCategory = ALL_CATEGORY;
         }
-        // Use the real allocated width when the popup is open; otherwise the
-        // popup auto-sizes to its content, so full-width rows are safe.
-        const available = this.catWrapBox.get_width() > 0
+        // Measuring a button's preferred width needs a theme node, which only
+        // exists while the popup actor is in the stage. The button must ALSO be
+        // attached to the tree first: measuring a detached button makes
+        // st_widget_get_theme_node spew "not in the stage" + g_signal_connect_object
+        // criticals. Off-stage we fall back to a text-length estimate; the
+        // open-state-changed repack re-measures with the real allocated width.
+        const inStage = this.catWrapBox.get_stage() !== null;
+        // Diagnostic: confirms whether the build ran in/off stage and which
+        // branch (estimate vs real measurement) was used.
+        // log(`[clipboard-with-passwords] category bar rebuild: inStage=${inStage} categories=${categories.length}`);
+        const available = inStage && this.catWrapBox.get_width() > 0
             ? this.catWrapBox.get_width()
             : 450;
 
@@ -97,20 +105,28 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 this._applyFilter();
             });
 
-            let btnWidth = 64;
-            try {
-                const pref = btn.get_preferred_width(-1);
-                btnWidth = pref[1] || pref.natural_size || 64;
-            } catch (e) {
+            // Attach before measuring: a detached button has no stage ancestor.
+            currentRowBox.add_child(btn);
+
+            // Rough estimate: ~7px per character + 16px horizontal padding.
+            let btnWidth = Math.max(64, labelText.length * 7 + 22);
+            if (inStage) {
+                try {
+                    const pref = btn.get_preferred_width(-1);
+                    btnWidth = pref[1] || btnWidth;
+                } catch (e) {
+                }
             }
             btnWidth += 4; // inter-button spacing
 
             if (currentWidth > 0 && currentWidth + btnWidth > available) {
+                // Button was placed on the wrong row — move it to a fresh one.
+                currentRowBox.remove_child(btn);
                 currentRowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 4px;' });
                 this.catWrapBox.add_child(currentRowBox);
+                currentRowBox.add_child(btn);
                 currentWidth = 0;
             }
-            currentRowBox.add_child(btn);
             currentWidth += btnWidth;
         });
         this._updateCategoryButtonsUI();
@@ -118,10 +134,15 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
     _updateCategoryButtonsUI() {
         if (!this.categoryButtons) return;
+        // Styling (style_class/style) must only touch widgets that are in the
+        // stage: off stage those setters can still trigger theme-node access.
+        // The menu-open repack (_rebuildCategoryBar) re-applies the styles.
+        const inStage = this.catWrapBox && this.catWrapBox.get_stage() !== null;
         const c = themeColors();
         this.categoryButtons.forEach(({ cat, btn }) => {
             const isSelected = cat === this.selectedCategory;
             btn.set_label(this._categoryButtonLabel(cat));
+            if (!inStage) return;
             btn.style_class = isSelected ? 'button button-active' : 'button';
             btn.style = `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
                 isSelected ? `background-color: ${c.catBgSelected}; color: ${c.catTextSelected}; font-weight: bold;` : `background-color: ${c.catBg}; color: ${c.catText};`
@@ -177,6 +198,17 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             text: this.currentQuery,
             style: 'padding: 4px 8px; font-size: 13px;'
         });
+        // A non-empty, unfocused search field also trips the
+        // "clutter_input_focus_is_focused" criticals on first layout (e.g. when
+        // the vault reopens with a leftover query). Keep it non-editable until
+        // first interaction / until it gets focused by the caller on open.
+        this.searchEntry.clutter_text.editable = false;
+        this.searchEntry.clutter_text.connect('button-press-event', () => {
+            this.searchEntry.clutter_text.editable = true;
+        });
+        this.searchEntry.clutter_text.connect('key-press-event', () => {
+            this.searchEntry.clutter_text.editable = true;
+        });
         this.searchEntry.set_x_expand(true);
         this.searchEntry.clutter_text.connect('text-changed', () => {
             this.currentQuery = this.searchEntry.get_text();
@@ -191,6 +223,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         });
         clearSearchBtn.connect('clicked', () => {
             this.searchEntry.set_text('');
+            this.searchEntry.clutter_text.editable = true;
             global.stage.set_key_focus(this.searchEntry);
         });
         topBar.add_child(clearSearchBtn);

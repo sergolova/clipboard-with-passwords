@@ -105,6 +105,7 @@ const ClipboardIndicator = GObject.registerClass({
             this.urlMetadataManager.saveCache();
         }
         this._disconnectSettings();
+        this._disconnectThemeListeners();
         this._unbindShortcuts();
         this._disconnectSelectionListener();
         this._clearDelayedSelectionTimeout();
@@ -192,15 +193,16 @@ const ClipboardIndicator = GObject.registerClass({
         this.hbox = hbox;
         // Theme marker for stylesheet.css rules that must differ between the
         // dark and light shell variants (private-mode dimming, separator, ...).
-        hbox.add_style_class_name(themeClass());
-        log(`[clipboard-with-passwords] themeClass=${themeClass()} text=${themeColors().text} cardBg=${themeColors().cardBg}`);
+        this._appliedThemeClass = themeClass();
+        hbox.add_style_class_name(this._appliedThemeClass);
 
         // Popup menu box: scope + theme marker for CSS rules that can't be
         // expressed inline (separator line, tag labels, pin buttons, type
         // colors, second line, empty state). Re-applied on scheme change in
         // _applyThemeClasses().
         this.menu.box.add_style_class_name('clipboard-indicator-menu');
-        this.menu.box.add_style_class_name(themeClass());
+        this.menu.box.add_style_class_name(this._appliedThemeClass);
+        this._connectThemeListeners();
 
         this.icon = new St.Icon({
             icon_name: INDICATOR_ICON,
@@ -332,6 +334,10 @@ const ClipboardIndicator = GObject.registerClass({
             this._setFocusOnOpenTimeout = setTimeout(() => {
                 if (!open) return;
 
+                // Belt & braces: re-check the theme marker every time the menu
+                // opens in case the scheme changed while it was closed.
+                this._applyThemeClasses();
+
                 if (this.isVaultMode && this.passwordVaultMenuSection) {
                     // Repack category buttons using the real (allocated) menu width
                     this.passwordVaultMenuSection._rebuildCategoryBar();
@@ -343,6 +349,8 @@ const ClipboardIndicator = GObject.registerClass({
                     global.stage.set_key_focus(item.actor);
                 } else if (this.isVaultMode && this.passwordVaultMenuSection?.searchEntry) {
                     // Focus the vault search field as soon as the storage opens
+                    // (enable it first - it starts deferred-non-editable).
+                    this.passwordVaultMenuSection.searchEntry.clutter_text.editable = true;
                     global.stage.set_key_focus(this.passwordVaultMenuSection.searchEntry);
                 } else if (SHOW_SEARCH_BAR && this.clipItemsRadioGroup.length > 0) {
                     this.searchEntry.set_text('');
@@ -614,12 +622,18 @@ const ClipboardIndicator = GObject.registerClass({
             }
         }
 
-        // History separator (between history and toggled buttons)
+        // History separator (between the list area and the toggled buttons).
+        // Must go after the LAST list section: with PINNED_ON_BOTTOM the menu
+        // order is [history, favorites], so putting it after scrollViewMenuSection
+        // would stack it right against the favorites separator.
         if (this.clipItemsRadioGroup.length > 0 &&
             this.historySection._getMenuItems().length > 0 && !PRIVATEMODE &&
             (SHOW_PRIVATE_MODE || SHOW_SETTINGS_BUTTON || SHOW_CLEAR_HISTORY_BUTTON)) {
             if (!this.menu.box.contains(this.historySeparator.actor)) {
-                const idx = this.menu.box.get_children().indexOf(this.scrollViewMenuSection.actor);
+                const afterSection = PINNED_ON_BOTTOM
+                    ? this.scrollViewFavoritesMenuSection
+                    : this.scrollViewMenuSection;
+                const idx = this.menu.box.get_children().indexOf(afterSection.actor);
                 this.menu.box.insert_child_at_index(this.historySeparator.actor, idx < 0 ? 0 : idx + 1);
             }
         } else if (this.menu.box.contains(this.historySeparator.actor)) {
@@ -708,6 +722,22 @@ const ClipboardIndicator = GObject.registerClass({
         return shortened;
     }
 
+    // Content-box insertion that respects an existing tag: the tag must stay
+    // to the RIGHT of the content (for hidden-label two-line items like
+    // multiline/URL/file rows), so insert the box before the tag when present,
+    // else before the actions spacer, else after the plain label.
+    _insertContentBox(menuItem, box) {
+        if (menuItem.tagLabel && menuItem.actor.contains(menuItem.tagLabel)) {
+            menuItem.actor.insert_child_below(box, menuItem.tagLabel);
+        } else if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
+            menuItem.actor.insert_child_below(box, menuItem.actionsSpacer);
+        } else if (menuItem.label && menuItem.actor.contains(menuItem.label)) {
+            menuItem.actor.insert_child_above(box, menuItem.label);
+        } else {
+            menuItem.actor.insert_child_at_index(box, 0);
+        }
+    }
+
     _renderTwoLineBox(menuItem, line1Text, line2Text) {
         menuItem.label.hide();
 
@@ -732,13 +762,7 @@ const ClipboardIndicator = GObject.registerClass({
         });
         box.add_child(line2);
 
-        if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
-            menuItem.actor.insert_child_below(box, menuItem.actionsSpacer);
-        } else if (menuItem.label && menuItem.actor.contains(menuItem.label)) {
-            menuItem.actor.insert_child_above(box, menuItem.label);
-        } else {
-            menuItem.actor.insert_child_at_index(box, 0);
-        }
+        this._insertContentBox(menuItem, box);
 
         menuItem._twoLineBox = box;
     }
@@ -788,11 +812,7 @@ const ClipboardIndicator = GObject.registerClass({
                 fileNamesLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 box.add_child(fileNamesLabel);
 
-                if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
-                    menuItem.actor.insert_child_below(box, menuItem.actionsSpacer);
-                } else {
-                    menuItem.actor.add_child(box);
-                }
+                this._insertContentBox(menuItem, box);
                 menuItem._twoLineBox = box;
             }
         } else if (entry.isColor()) {
@@ -824,11 +844,7 @@ const ClipboardIndicator = GObject.registerClass({
             });
             box.add_child(label);
 
-            if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
-                menuItem.actor.insert_child_below(box, menuItem.actionsSpacer);
-            } else {
-                menuItem.actor.add_child(box);
-            }
+            this._insertContentBox(menuItem, box);
             menuItem._twoLineBox = box;
         } else if (entry.isMultiline()) {
             menuItem.label.hide();
@@ -839,12 +855,20 @@ const ClipboardIndicator = GObject.registerClass({
                 .map(l => l.trim())
                 .filter(l => l.length > 0);
 
+            // Protected (***) multiline items: mask every displayed line so
+            // no content leaks through the two-line preview.
+            const displayLine = (text) => {
+                if (!entry.isPassword()) return text;
+                if (text.length <= 3) return '***';
+                return text.slice(0, -3) + '***';
+            };
+
             const line1Text = nonEmptyLines.length > 0
-                ? this._truncate(nonEmptyLines[0], MAX_ENTRY_LENGTH)
+                ? this._truncate(displayLine(nonEmptyLines[0]), MAX_ENTRY_LENGTH)
                 : '';
 
             let line2Text = nonEmptyLines.length > 1
-                ? this._truncate(nonEmptyLines[1], MAX_ENTRY_LENGTH)
+                ? this._truncate(displayLine(nonEmptyLines[1]), MAX_ENTRY_LENGTH)
                 : '';
 
             if (nonEmptyLines.length > 2) {
@@ -939,6 +963,110 @@ const ClipboardIndicator = GObject.registerClass({
         }
     }
 
+    _connectThemeListeners() {
+        if (this._destroyed) {
+            return;
+        }
+        this._themeSignalIds = [];
+        this._userThemeSettings = null;
+        // Both St.Settings properties are OS-light/dark aware: color-scheme is
+        // the requested scheme (GNOME quick-settings toggle), shell-color-scheme
+        // tracks the actually applied scheme (incl. user-theme extensions).
+        try {
+            const stSettings = St.Settings.get();
+            this._themeSignalIds.push(
+                stSettings.connect('notify::color-scheme', () => this._applyThemeClasses())
+            );
+            this._themeSignalIds.push(
+                stSettings.connect('notify::shell-color-scheme', () => this._applyThemeClasses())
+            );
+        } catch (e) {
+            log(`[clipboard-with-passwords] cannot watch St.Settings theme: ${e}`);
+        }
+        // Custom themes via the user-theme extension (optional schema).
+        try {
+            const schemaSource = Gio.SettingsSchemaSource.get_default();
+            if (schemaSource && schemaSource.lookup('org.gnome.shell.extensions.user-theme', true)) {
+                this._userThemeSettings = new Gio.Settings({
+                    schema_id: 'org.gnome.shell.extensions.user-theme'
+                });
+                this._userThemeSignalId = this._userThemeSettings.connect(
+                    'changed::theme-name',
+                    () => this._applyThemeClasses()
+                );
+            }
+        } catch (e) {
+            log(`[clipboard-with-passwords] cannot watch user-theme: ${e}`);
+            this._userThemeSettings = null;
+        }
+    }
+
+    _disconnectThemeListeners() {
+        if (this._themeSignalIds && this._themeSignalIds.length > 0) {
+            try {
+                const stSettings = St.Settings.get();
+                this._themeSignalIds.forEach(id => stSettings.disconnect(id));
+            } catch (e) {
+            }
+            this._themeSignalIds = [];
+        }
+        if (this._userThemeSettings && this._userThemeSignalId !== undefined) {
+            try {
+                this._userThemeSettings.disconnect(this._userThemeSignalId);
+            } catch (e) {
+            }
+            this._userThemeSettings = null;
+            this._userThemeSignalId = undefined;
+        }
+    }
+
+    // Live light/dark switch (GNOME 46 quick settings) doesn't restart the
+    // shell, so the .ci-theme-* classes applied at build time go stale. This
+    // straightens them out, idempotently, and re-themes everything that was
+    // painted with inline themeColors() styles (vault UI, swatch border,...).
+    _applyThemeClasses() {
+        if (this._destroyed) {
+            return;
+        }
+        const cls = themeClass();
+        if (cls === this._appliedThemeClass) {
+            return;
+        }
+        this._appliedThemeClass = cls;
+
+        // 1) Top-bar hbox marker
+        this.hbox.remove_style_class_name('ci-theme-dark');
+        this.hbox.remove_style_class_name('ci-theme-light');
+        this.hbox.add_style_class_name(cls);
+
+        // 2) Menu popup marker (pins, tags, separators, type colors, second line)
+        if (this.menu && this.menu.box) {
+            this.menu.box.remove_style_class_name('ci-theme-dark');
+            this.menu.box.remove_style_class_name('ci-theme-light');
+            this.menu.box.add_style_class_name(cls);
+        }
+
+        // 3) Vault section uses inline themeColors() at build time → rebuild.
+        if (this.passwordVaultMenuSection) {
+            try {
+                this.passwordVaultMenuSection.refreshUI();
+            } catch (e) {
+                log(`[clipboard-with-passwords] vault re-theme failed: ${e}`);
+            }
+        }
+
+        // 4) Entry labels embed themeColors().swatchBorder inline (color rows).
+        if (this.historySection && this.favoritesSection) {
+            this._getAllIMenuItems().forEach(mItem => {
+                try {
+                    this._setEntryLabel(mItem);
+                    this._updateTypeStyle(mItem);
+                } catch (e) {
+                }
+            });
+        }
+    }
+
     _findNextMenuItem(currentMenutItem) {
         let currentIndex = this.clipItemsRadioGroup.indexOf(currentMenutItem);
 
@@ -981,6 +1109,15 @@ const ClipboardIndicator = GObject.registerClass({
         menuItem.entry = entry;
         menuItem.clipContents = entry.getStringValue();
         menuItem.radioGroup = this.clipItemsRadioGroup;
+
+        // Invariant: a protected (***) item is always pinned. Older versions
+        // allowed pin → protect → unpin, persisting password=true with
+        // favorite=false and stranding items masked in the history list with
+        // no unprotect button. Clear protection on load/recreate so that
+        // state can never exist (works as a migration for legacy registries).
+        if (entry.isPassword() && !entry.isFavorite()) {
+            entry.setPassword(false);
+        }
 
         // CLICK fix for Paste on Select: clicking behaves like Enter
         menuItem.connect('activate', () => {
@@ -1029,7 +1166,7 @@ const ClipboardIndicator = GObject.registerClass({
                     }
                     break;
                 case Clutter.KEY_e:
-                    if (entry.isText() && !entry.isURIList()) {
+                    if (entry.isText() && !entry.isURIList() && !entry.isMultiline()) {
                         this.#showEditDialog(menuItem, true);
                         return Clutter.EVENT_STOP;
                     }
@@ -1089,8 +1226,9 @@ const ClipboardIndicator = GObject.registerClass({
             menuItem.actor.add_child(menuItem.imagePreviewBtn);
         }
 
-        // Edit button (text entries only, not URI list)
-        if (entry.isText() && !entry.isURIList()) {
+        // Edit button (single-line text entries only; URI-list and multiline
+        // values are rendered through specialized previews, not editable)
+        if (entry.isText() && !entry.isURIList() && !entry.isMultiline()) {
             menuItem.editBtn = new St.Button({
                 style_class: 'ci-action-btn',
                 can_focus: true,
@@ -1128,8 +1266,9 @@ const ClipboardIndicator = GObject.registerClass({
             () => this._favoriteToggle(menuItem)
         );
 
-        // Password toggle button (pinned text items only)
-        if (entry.isText() && !entry.isURIList()) {
+        // Password toggle button (pinned single-line text items; file/URIList and
+        // color entries are not protectable)
+        if (entry.isText() && !entry.isURIList() && !entry.isColor()) {
             const pwIcon = new St.Icon({
                 icon_name: 'channel-insecure-symbolic',
                 style_class: 'system-status-icon'
@@ -1238,7 +1377,17 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _favoriteToggle(menuItem) {
-        menuItem.entry.favorite = menuItem.entry.isFavorite() ? false : true;
+        const wasFavorite = menuItem.entry.isFavorite();
+        menuItem.entry.favorite = !wasFavorite;
+
+        // A protected (***) item may only live inside the pinned section:
+        // unpinning clears protection, otherwise the item would slip into the
+        // history list where the unprotect button is hidden. _moveItemFirst
+        // recreates the widget, so the visual state follows automatically.
+        if (wasFavorite && menuItem.entry.isPassword()) {
+            menuItem.entry.setPassword(false);
+        }
+
         this._moveItemFirst(menuItem);
         this._updateCache();
         this.#showElements();
@@ -2343,6 +2492,19 @@ const ClipboardIndicator = GObject.registerClass({
             x_expand: true,
             style: 'min-width: 300px;',
         });
+        // Non-empty unfocused texts push "clutter_input_focus_is_focused"
+        // input-focus criticals on their first layout: an editable, unfocused
+        // Clutter.Text asserts inside its cursor-location/surrounding updates.
+        // Keep the field non-editable until first user interaction - once the
+        // text holds key focus the input method is attached and the assertions
+        // can't fire.
+        textEntry.clutter_text.editable = false;
+        textEntry.clutter_text.connect('button-press-event', () => {
+            textEntry.clutter_text.editable = true;
+        });
+        textEntry.clutter_text.connect('key-press-event', () => {
+            textEntry.clutter_text.editable = true;
+        });
 
         dialog.contentLayout.add_child(textEntry);
 
@@ -2386,8 +2548,40 @@ const ClipboardIndicator = GObject.registerClass({
                 style_class: 'ci-tag-label',
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            menuItem.actor.insert_child_above(menuItem.tagLabel, menuItem.label);
+            // Keep the tag to the RIGHT of the content: hidden-label items
+            // (multiline/URL/file/color) put the actual content in a box, so
+            // inserting above the (hidden) label would push the tag far left.
+            // Placing it before the actions spacer keeps [content, tag, spacer].
+            if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
+                menuItem.actor.insert_child_below(menuItem.tagLabel, menuItem.actionsSpacer);
+            } else {
+                menuItem.actor.insert_child_above(menuItem.tagLabel, menuItem.label);
+            }
         }
+    }
+
+    // Build a Clutter/Cogl color for the edit dialog from a CSS hex string
+    // and a 0..1 alpha. Clutter.Text color properties are typed ClutterColor
+    // on GNOME ≤46 (Clutter.Color, GJS boxed wrapper) and CoglColor on 47+
+    // (Clutter.Color was merged into Cogl.Color upstream). Passing a Cogl.Color
+    // on ≤46 throws «Object is of type Cogl.Color - cannot convert to
+    // ClutterColor», so pick the exact wrapper the current runtime expects.
+    #buildEditorColor(hex, alpha = 1.0) {
+        if (typeof Clutter.Color === 'function') {
+            const aByte = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+                .toString(16).padStart(2, '0');
+            const spec = `${(hex.startsWith('#') ? hex : `#${hex}`).slice(0, 7)}${aByte}`;
+            const [ok, color] = Clutter.Color.from_string(spec);
+            if (ok) return color;
+        }
+        const h = hex.replace('#', '');
+        const color = new Cogl.Color();
+        color.init_from_4f(
+            parseInt(h.slice(0, 2), 16) / 255,
+            parseInt(h.slice(2, 4), 16) / 255,
+            parseInt(h.slice(4, 6), 16) / 255,
+            alpha);
+        return color;
     }
 
     #showEditDialog(menuItem, reopenOnClose = false) {
@@ -2411,29 +2605,33 @@ const ClipboardIndicator = GObject.registerClass({
 
         const clutterText = new Clutter.Text({
             text: menuItem.entry.getStringValue(),
-            editable: true,
+            // An editable, unfocused Clutter.Text pushes "clutter_input_focus_is_focused"
+            // input-focus criticals whenever its text offsets change during
+            // allocation. Start non-editable and only enable editing once the
+            // user actually interacts with the text - by then the input method
+            // is attached and the assertions can't fire.
+            editable: false,
             reactive: true,
             single_line_mode: false,
             activatable: false,
             line_wrap: true,
 
         });
+        clutterText.connect('button-press-event', () => {
+            clutterText.editable = true;
+        });
+        clutterText.connect('key-press-event', () => {
+            clutterText.editable = true;
+        });
 
-        const white = new Cogl.Color();
-        white.init_from_4f(1.0, 1.0, 1.0, 1.0);
-        const selectionBlue = new Cogl.Color();
-        selectionBlue.init_from_4f(0.39, 0.59, 1.0, 0.71);
         // Text color must follow the active theme — hardcoding white makes the
-        // dialog unreadable on light shells.
-        const textColor = themeColors().text;
-        const tR = parseInt(textColor.slice(1, 3), 16) / 255;
-        const tG = parseInt(textColor.slice(3, 5), 16) / 255;
-        const tB = parseInt(textColor.slice(5, 7), 16) / 255;
-        const themeText = new Cogl.Color();
-        themeText.init_from_4f(tR, tG, tB, 1.0);
-        clutterText.color = themeText;
-        clutterText.selection_color = selectionBlue;
-        clutterText.selected_text_color = themeText;
+        // dialog unreadable on light shells. Clutter.Text:color is a
+        // ClutterColor (Clutter.Color) on GNOME ≤46 and a CoglColor
+        // (Cogl.Color) on 47+, so colors are built via the type-appropriate
+        // API (#buildEditorColor handles both).
+        clutterText.color = this.#buildEditorColor(themeColors().text);
+        clutterText.selection_color = this.#buildEditorColor('#6396ff', 0.71);
+        clutterText.selected_text_color = this.#buildEditorColor('#ffffff');
 
         const textBox = new St.BoxLayout({
             style_class: 'ci-edit-textbox',
