@@ -1,6 +1,11 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
+// Internal sentinel for the pseudo-category "All". It is deliberately NOT the
+// translated word (e.g. 'Все'/'All'): such a word could collide with a real
+// user category, and translations belong only to the button label in the UI.
+export const ALL_CATEGORY = '__all__';
+
 export function generatePassword(length = 16, options = {}) {
     const {
         useUpper = true,
@@ -51,7 +56,6 @@ export class PasswordVaultManager {
         this.masterPassword = null;
         this.data = {
             version: 1,
-            categories: ['Общее', 'Работа', 'Личное'],
             items: []
         };
         this.unlocked = false;
@@ -69,30 +73,48 @@ export class PasswordVaultManager {
     lock() {
         this.masterPassword = null;
         this.unlocked = false;
-        this.data = { version: 1, categories: ['Общее'], items: [] };
+        this.data = { version: 1, items: [] };
         this.recentService = null;
     }
 
     async unlock(password) {
         const file = Gio.File.new_for_path(this.zipPath);
         if (!file.query_exists(null)) {
+            // Fresh vault (first run or file was deleted): the target
+            // directory must be creatable/writable, otherwise a clear error
+            // is raised instead of a silent failure.
+            this._ensureWritableDirectory(file);
+
             this.masterPassword = password;
             this.unlocked = true;
             this.data = {
                 version: 1,
-                categories: ['Общее', 'Работа', 'Личное'],
                 items: []
             };
             await this.save();
             return true;
         }
 
-        const proc = new Gio.Subprocess({
-            argv: ['7z', 'x', `-p${password}`, '-so', this.zipPath],
-            flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
-        });
+        // Existing file: resolve obvious path/writability problems up front,
+        // with messages the unlock dialog can display as-is.
+        if (this._isDirectory(file)) {
+            throw new Error(_('The password vault path points to a directory.') + '\n' + this.zipPath);
+        }
+        if (this._isReadOnly(file)) {
+            throw new Error(_('The password vault file is read-only and cannot be updated.') + '\n' + this.zipPath);
+        }
 
-        proc.init(null);
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv: ['7z', 'x', `-p${password}`, '-so', this.zipPath],
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            });
+            proc.init(null);
+        } catch (e) {
+            // Gio.Subprocess throws when the binary cannot be spawned.
+            throw new Error(_('7-Zip (7z) is not installed.') + '\n' + _('Install 7-Zip and restart the shell.'));
+        }
 
         return new Promise((resolve, reject) => {
             proc.communicate_utf8_async(null, null, (proc, res) => {
@@ -100,7 +122,7 @@ export class PasswordVaultManager {
                     const [, stdout, stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
                     if (status !== 0) {
-                        reject(new Error(stderr || 'Wrong password or corrupt archive'));
+                        reject(new Error(_('Wrong password or corrupted vault archive.') + '\n' + (stderr || '').trim()));
                         return;
                     }
 
@@ -108,16 +130,17 @@ export class PasswordVaultManager {
                     try {
                         parsedData = JSON.parse(stdout);
                     } catch (e) {
-                        reject(new Error('Archive does not contain valid JSON data'));
+                        reject(new Error(_('The vault archive does not contain valid JSON data.')));
                         return;
                     }
 
                     this.masterPassword = password;
                     this.unlocked = true;
+                    // Re-sanitize on load so legacy or hand-edited items get
+                    // cleaned the next time the vault is saved.
                     this.data = {
                         version: parsedData.version || 1,
-                        categories: parsedData.categories || ['Общее'],
-                        items: parsedData.items || []
+                        items: (parsedData.items || []).map(it => this._sanitizeItem(it, it && it.id))
                     };
                     resolve(true);
                 } catch (e) {
@@ -129,13 +152,19 @@ export class PasswordVaultManager {
 
     async save() {
         if (!this.unlocked || !this.masterPassword) {
-            throw new Error('Vault is locked');
+            throw new Error(_('The password vault is locked.'));
         }
 
         const zipFile = Gio.File.new_for_path(this.zipPath);
-        const parentDir = zipFile.get_parent();
-        if (parentDir && !parentDir.query_exists(null)) {
-            parentDir.make_directory_with_parents(null);
+
+        // Validate the target before touching anything, so misuse of the
+        // "Password Vault File Path" setting surfaces as a clear error.
+        if (this._isDirectory(zipFile)) {
+            throw new Error(_('The password vault path points to a directory.') + '\n' + this.zipPath);
+        }
+        this._ensureWritableDirectory(zipFile);
+        if (zipFile.query_exists(null) && this._isReadOnly(zipFile)) {
+            throw new Error(_('The password vault file is read-only and cannot be updated.') + '\n' + this.zipPath);
         }
 
         if (zipFile.query_exists(null)) {
@@ -151,7 +180,12 @@ export class PasswordVaultManager {
         const tmpJsonPath = GLib.build_filenamev([tmpDir, `ci_vault_${Date.now()}.json`]);
         const tmpFile = Gio.File.new_for_path(tmpJsonPath);
 
-        const jsonStr = JSON.stringify(this.data, null, 2);
+        // Always serialize a sanitized copy so empty/false fields never
+        // reappear in the stored JSON (e.g. after hand-editing a file).
+        const jsonStr = JSON.stringify({
+            version: this.data.version || 1,
+            items: (this.data.items || []).map(it => this._sanitizeItem(it, it && it.id))
+        }, null, 2);
         const stream = tmpFile.replace(null, false, Gio.FileCreateFlags.NONE, null);
         stream.write_all(jsonStr, null);
         stream.close(null);
@@ -165,15 +199,23 @@ export class PasswordVaultManager {
         tmpFile.move(passwordsJsonFile, Gio.FileCopyFlags.OVERWRITE, null, null);
 
         if (zipFile.query_exists(null)) {
-            zipFile.delete(null);
+            try {
+                zipFile.delete(null);
+            } catch (e) {
+                throw new Error(_('Failed to update the password vault archive.') + '\n' + (e && e.message ? e.message : ''));
+            }
         }
 
-        const proc = new Gio.Subprocess({
-            argv: ['7z', 'a', '-tzip', `-p${this.masterPassword}`, '-y', this.zipPath, passwordsJsonPath],
-            flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
-        });
-
-        proc.init(null);
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv: ['7z', 'a', '-tzip', `-p${this.masterPassword}`, '-y', this.zipPath, passwordsJsonPath],
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            });
+            proc.init(null);
+        } catch (e) {
+            throw new Error(_('7-Zip (7z) is not installed.') + '\n' + _('Install 7-Zip and restart the shell.'));
+        }
 
         return new Promise((resolve, reject) => {
             proc.communicate_utf8_async(null, null, (proc, res) => {
@@ -187,7 +229,7 @@ export class PasswordVaultManager {
                     const [, , stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
                     if (status !== 0) {
-                        reject(new Error(stderr || 'Failed to update zip archive'));
+                        reject(new Error(_('Failed to update the password vault archive.') + '\n' + (stderr || '').trim()));
                         return;
                     }
                     resolve(true);
@@ -198,23 +240,63 @@ export class PasswordVaultManager {
         });
     }
 
-    getCategories() {
-        return this.data.categories || ['Общее'];
+    // ---------------------------------------------------------------- helpers
+
+    // Ensure the parent directory of `file` exists (created on demand) and is
+    // writable, throwing a user-facing error otherwise.
+    _ensureWritableDirectory(file) {
+        const parent = file.get_parent();
+        if (!parent) {
+            return;
+        }
+        if (!parent.query_exists(null)) {
+            try {
+                parent.make_directory_with_parents(null);
+            } catch (e) {
+                throw new Error(_('Cannot create the password vault directory.') + '\n' + parent.get_path());
+            }
+        }
+        if (this._isReadOnly(parent)) {
+            throw new Error(_('The password vault directory is not writable.') + '\n' + parent.get_path());
+        }
     }
 
-    addCategory(categoryName) {
-        if (!categoryName) return;
-        categoryName = categoryName.trim();
-        if (!this.data.categories.includes(categoryName)) {
-            this.data.categories.push(categoryName);
-            this.save();
+    _isReadOnly(file) {
+        try {
+            const info = file.query_info('access::can-write', Gio.FileQueryInfoFlags.NONE, null);
+            if (info) {
+                return !info.get_attribute_boolean('access::can-write');
+            }
+        } catch (e) {
         }
+        return false;
+    }
+
+    _isDirectory(file) {
+        try {
+            return file.query_file_type(Gio.FileQueryInfoFlags.NONE, null) === Gio.FileType.DIRECTORY;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    getCategories() {
+        // Categories are derived dynamically from the items themselves,
+        // in order of first appearance (newest items first).
+        const seen = [];
+        (this.data.items || []).forEach(item => {
+            const cat = item.category;
+            if (cat && !seen.includes(cat)) {
+                seen.push(cat);
+            }
+        });
+        return seen;
     }
 
     getItems(query = '', category = '') {
         let items = this.data.items || [];
 
-        if (category && category !== 'Все') {
+        if (category && category !== ALL_CATEGORY) {
             items = items.filter(item => item.category === category);
         }
 
@@ -236,19 +318,37 @@ export class PasswordVaultManager {
         return items;
     }
 
-    async addService(itemData) {
+    // Build a minimal item object: empty/false fields are omitted entirely so
+    // the stored JSON stays clean and easy to edit by hand or with other tools.
+    _sanitizeItem(data, id) {
         const item = {
-            id: `service_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            name: itemData.name || 'Новый сервис',
-            category: itemData.category || 'Общее',
-            description: itemData.description || '',
-            login: itemData.login || '',
-            password: itemData.password || '',
-            extraFields: itemData.extraFields || [],
-            updatedAt: Date.now()
+            id: data.id || id || `service_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            name: data.name || _('Untitled'),
+            updatedAt: data.updatedAt || Date.now()
         };
+        if (data.category && data.category.trim()) item.category = data.category.trim();
+        if (data.description && data.description.trim()) item.description = data.description.trim();
+        if (data.login && data.login.trim()) item.login = data.login.trim();
+        if (data.password) item.password = data.password;
+        if (Array.isArray(data.extraFields)) {
+            const extras = data.extraFields
+                .map(f => {
+                    const e = {};
+                    if (f.label && f.label.trim()) e.label = f.label.trim();
+                    if (f.value !== undefined && f.value !== null && String(f.value).trim() !== '') {
+                        e.value = String(f.value).trim();
+                    }
+                    if (f.isHidden) e.isHidden = true;
+                    return e;
+                })
+                .filter(f => f.label || f.value);
+            if (extras.length > 0) item.extraFields = extras;
+        }
+        return item;
+    }
 
-        this.addCategory(item.category);
+    async addService(itemData) {
+        const item = this._sanitizeItem(itemData);
         this.data.items.unshift(item);
         await this.save();
         return item;
@@ -259,16 +359,10 @@ export class PasswordVaultManager {
         if (index === -1) return null;
 
         const existing = this.data.items[index];
-        const updated = {
-            ...existing,
-            ...updatedData,
-            id: existing.id,
-            updatedAt: Date.now()
-        };
-
-        if (updated.category) {
-            this.addCategory(updated.category);
-        }
+        const updated = this._sanitizeItem(
+            { ...existing, ...updatedData, updatedAt: Date.now() },
+            existing.id
+        );
 
         this.data.items[index] = updated;
 

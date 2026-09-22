@@ -44,5 +44,11 @@ export const PrefsFields = {
     SHOW_EDIT_BUTTON                : 'show-edit-button',
     SHOW_PREVIEW_BUTTON             : 'show-preview-button',
     PASSWORD_VAULT_PATH             : 'password-vault-path',
+    VAULT_ENABLED                   : 'vault-enabled',
+    VAULT_COPY_TO_HISTORY           : 'vault-copy-to-history',
+    VAULT_PIN_RECENT                : 'vault-pin-recent',
+    VAULT_HIDE_ALL_CATEGORY         : 'vault-hide-all-category',
+    COLORIZE_CLIPBOARD              : 'colorize-clipboard',
+    FETCH_YOUTUBE_TITLES            : 'fetch-youtube-titles',
     BINDING_TOGGLE_PASSWORD_VAULT   : 'toggle-password-vault',
 };

@@ -123,7 +123,10 @@ export const MasterPasswordDialog = GObject.registerClass(
                     this.setError(_('Wrong password or archive error'));
                 }
             } catch (e) {
-                this.setError(_('Wrong password or archive error'));
+                const msg = (e && e.message && typeof e.message === 'string' && e.message.length > 0)
+                    ? e.message
+                    : _('Wrong password or archive error');
+                this.setError(msg);
             }
         }
     }
@@ -161,7 +164,7 @@ export const ServiceEditDialog = GObject.registerClass(
             // CATEGORY AT THE TOP
             mainBox.add_child(new St.Label({ text: _('Category:'), style: 'font-weight: bold; font-size: 12px;' }));
             
-            const initialCategory = serviceItem ? serviceItem.category : (existingCategories && existingCategories[0] ? existingCategories[0] : 'Общее');
+            const initialCategory = serviceItem ? (serviceItem.category || '') : ((existingCategories && existingCategories[0]) || '');
 
             if (existingCategories && existingCategories.length > 0) {
                 let catBtnsContainer = new St.BoxLayout({ vertical: true, style: 'spacing: 4px; margin-bottom: 4px;' });
@@ -331,7 +334,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 action: () => {
                     const data = {
                         name: this.nameEntry.get_text() || _('Untitled'),
-                        category: this.categoryEntry.get_text() || 'Общее',
+                        category: this.categoryEntry.get_text() || '',
                         description: this.descEntry.get_text() || '',
                         login: this.loginEntry.get_text() || '',
                         password: this.pwdEntry.get_text() || '',

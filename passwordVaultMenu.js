@@ -3,28 +3,53 @@ import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ServiceEditDialog } from './passwordVaultDialog.js';
+import { PrefsFields } from './constants.js';
+import { ALL_CATEGORY } from './passwordVault.js';
 
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
-    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback) {
+    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null) {
         super();
 
         this.vaultManager = vaultManager;
         this.copyToClipboardCallback = copyToClipboardCallback; // fn(text)
         this.refreshCallback = refreshCallback; // fn() to refresh UI
         this.closeMenuCallback = closeMenuCallback; // fn() to close popup menu
+        this.settings = extensionSettings;
 
         this.currentQuery = '';
-        this.selectedCategory = 'Все';
+        this.selectedCategory = ALL_CATEGORY;
         this.serviceCardEntries = []; // Array of { item, actor }
+        this._revealHint = null; // "Type to reveal services…" label (hide-All mode)
 
         this._buildUI();
+    }
+
+    get _pinRecent() {
+        if (this.settings) {
+            try {
+                return this.settings.get_boolean(PrefsFields.VAULT_PIN_RECENT);
+            } catch (e) {
+            }
+        }
+        return true;
+    }
+
+    get _hideAllCategory() {
+        if (this.settings) {
+            try {
+                return this.settings.get_boolean(PrefsFields.VAULT_HIDE_ALL_CATEGORY);
+            } catch (e) {
+            }
+        }
+        return false;
     }
 
     refreshUI() {
         const visibleCatCount = this.vaultManager.getCategories()
             .filter(cat => this._categoryCount(cat) > 0).length;
-        const barCatCount = (this.categoryButtons ? this.categoryButtons.length : 1) - 1; // minus "Все"
+        const barCatCount = (this.categoryButtons ? this.categoryButtons.length : 1) - 1; // minus ALL_CATEGORY
         if (barCatCount !== visibleCatCount) {
             this._rebuildCategoryBar();
         } else {
@@ -39,10 +64,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.catWrapBox.destroy_all_children();
         this.categoryButtons = [];
 
-        const categories = ['Все', ...this.vaultManager.getCategories().filter(cat => this._categoryCount(cat) > 0)];
+        const categories = [ALL_CATEGORY, ...this.vaultManager.getCategories().filter(cat => this._categoryCount(cat) > 0)];
         // Reset the filter if the selected category no longer has any services
-        if (this.selectedCategory !== 'Все' && !categories.includes(this.selectedCategory)) {
-            this.selectedCategory = 'Все';
+        if (this.selectedCategory !== ALL_CATEGORY && !categories.includes(this.selectedCategory)) {
+            this.selectedCategory = ALL_CATEGORY;
         }
         // Use the real allocated width when the popup is open; otherwise the
         // popup auto-sizes to its content, so full-width rows are safe.
@@ -55,7 +80,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         let currentWidth = 0;
         categories.forEach(cat => {
-            const labelText = `${cat === 'Все' ? _('All') : cat} (${this._categoryCount(cat)})`;
+            const labelText = this._categoryButtonLabel(cat);
             let btn = new St.Button({
                 label: labelText,
                 style_class: 'button',
@@ -92,12 +117,22 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (!this.categoryButtons) return;
         this.categoryButtons.forEach(({ cat, btn }) => {
             const isSelected = cat === this.selectedCategory;
-            btn.set_label(`${cat === 'Все' ? _('All') : cat} (${this._categoryCount(cat)})`);
+            btn.set_label(this._categoryButtonLabel(cat));
             btn.style_class = isSelected ? 'button button-active' : 'button';
             btn.style = `padding: 2px 8px; font-size: 11px; border-radius: 4px; ${
                 isSelected ? 'background-color: #3584e4; color: #ffffff; font-weight: bold;' : 'background-color: rgba(255,255,255,0.1); color: #eeeeee;'
             }`;
         });
+    }
+
+    // In "hide All" mode the counts are suppressed too, so a shoulder-surfer
+    // can't learn how many services are stored.
+    _categoryButtonLabel(cat) {
+        const name = cat === ALL_CATEGORY ? _('All') : cat;
+        if (this._hideAllCategory) {
+            return name;
+        }
+        return `${name} (${this._categoryCount(cat)})`;
     }
 
     _categoryCount(cat) {
@@ -190,7 +225,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     _updateRecentBanner() {
         this.recentBox.destroy_all_children();
         const recent = this.vaultManager.recentService;
-        if (!recent) {
+        if (!recent || !this._pinRecent) {
             this.recentBox.hide();
             return;
         }
@@ -249,6 +284,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     _renderAllCards() {
         this.itemsBox.destroy_all_children();
         this.serviceCardEntries = [];
+        this._revealHint = null;
 
         const items = this.vaultManager.getItems('', ''); // All items
 
@@ -277,7 +313,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         let visibleCount = 0;
         this.serviceCardEntries.forEach(({ item, actor }) => {
-            let matchCat = (cat === 'Все' || item.category === cat);
+            let matchCat = (cat === ALL_CATEGORY || item.category === cat);
+            if (cat === ALL_CATEGORY && this._hideAllCategory && !q) {
+                matchCat = false;
+            }
             let matchQuery = true;
 
             if (q) {
@@ -296,6 +335,26 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             actor.visible = visible;
             if (visible) visibleCount++;
         });
+
+        // In "hide All" mode the cards are hidden until the user searches;
+        // show a neutral hint instead of a wall of nothing. The hint appears
+        // at the bottom of the list and is removed as soon as the user types
+        // (i.e. once any search takes effect), whatever the results are.
+        const showRevealHint = this._hideAllCategory &&
+            cat === ALL_CATEGORY &&
+            !q &&
+            this.serviceCardEntries.length > 0;
+        if (showRevealHint && !this._revealHint) {
+            this._revealHint = new St.Label({
+                text: _('Type to reveal services…'),
+                style: 'color: #888888; font-size: 12px; padding: 16px;',
+                x_align: Clutter.ActorAlign.CENTER
+            });
+            this.itemsBox.add_child(this._revealHint);
+        } else if (!showRevealHint && this._revealHint) {
+            this._revealHint.destroy();
+            this._revealHint = null;
+        }
     }
 
     _createServiceCard(item) {
@@ -307,13 +366,15 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         // Title bar: [категория] название
         let titleBar = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
 
-        let catLabel = new St.Label({
-            text: `[${item.category}]`,
-            style: 'font-size: 11px; color: #888888;',
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.START
-        });
-        titleBar.add_child(catLabel);
+        if (item.category) {
+            let catLabel = new St.Label({
+                text: `[${item.category}]`,
+                style: 'font-size: 11px; color: #888888;',
+                y_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.START
+            });
+            titleBar.add_child(catLabel);
+        }
 
         let nameLabel = new St.Label({
             text: item.name,
@@ -477,19 +538,34 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             item,
             this.vaultManager.getCategories(),
             async (savedData) => {
-                if (item) {
-                    await this.vaultManager.updateService(item.id, savedData);
-                } else {
-                    await this.vaultManager.addService(savedData);
+                try {
+                    if (item) {
+                        await this.vaultManager.updateService(item.id, savedData);
+                    } else {
+                        await this.vaultManager.addService(savedData);
+                    }
+                    if (this.refreshCallback) this.refreshCallback();
+                } catch (e) {
+                    this._notifySaveError(e);
                 }
-                if (this.refreshCallback) this.refreshCallback();
             },
             async (deleteId) => {
-                await this.vaultManager.deleteService(deleteId);
-                if (this.refreshCallback) this.refreshCallback();
+                try {
+                    await this.vaultManager.deleteService(deleteId);
+                    if (this.refreshCallback) this.refreshCallback();
+                } catch (e) {
+                    this._notifySaveError(e);
+                }
             },
             focusFieldName
         );
         dialog.open();
+    }
+
+    _notifySaveError(e) {
+        let msg = (e && e.message && typeof e.message === 'string' && e.message.length > 0)
+            ? e.message
+            : _('Failed to save the password vault.');
+        Main.notify(_('Password Vault'), msg);
     }
 }

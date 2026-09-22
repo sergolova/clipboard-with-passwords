@@ -259,12 +259,42 @@ class Settings {
             this.field_clear_history_interval.set_sensitive(widget.active);
         });
 
+        this.field_colorize_clipboard = new Adw.SwitchRow({
+            title: _("Colorize clipboard content"),
+            subtitle: _("Highlight clipboard entries by type (files, URLs, emails, colors, passwords)")
+        });
+
+        this.field_fetch_youtube_titles = new Adw.SwitchRow({
+            title: _("Fetch YouTube video titles"),
+            subtitle: _("Show the video title for copied YouTube links")
+        });
+
+        this.field_vault_enabled = new Adw.SwitchRow({
+            title: _("Enable password vault"),
+            subtitle: _("Show the vault section and open it with right-click or the hotkey")
+        });
+
+        this.field_vault_copy_to_history = new Adw.SwitchRow({
+            title: _("Add vault copies to clipboard history"),
+            subtitle: _("Everything copied from the vault lands in the visible clipboard list. WARNING: this stores passwords and logins in plain text — keep it off unless you understand the risk")
+        });
+
         this.field_password_vault_path = new Adw.EntryRow({
             title: _("Password Vault File Path"),
             text: this.schema.get_string(PrefsFields.PASSWORD_VAULT_PATH) || '~/.config/clipboard-indicator/passwords.zip'
         });
         this.field_password_vault_path.connect('changed', (row) => {
             this.schema.set_string(PrefsFields.PASSWORD_VAULT_PATH, row.get_text());
+        });
+
+        this.field_vault_pin_recent = new Adw.SwitchRow({
+            title: _("Pin last used service card"),
+            subtitle: _("Show the last used service as a card at the top of the vault")
+        });
+
+        this.field_vault_hide_all_category = new Adw.SwitchRow({
+            title: _("Hide services in the 'All' view"),
+            subtitle: _("When 'All' is selected, show nothing until you search (extra privacy)")
         });
 
         this.ui =  new Adw.PreferencesGroup({ title: _('UI') });
@@ -278,7 +308,11 @@ class Settings {
         this.item_actions = new Adw.PreferencesGroup({ title: _('Item Actions') });
         this.password_vault = new Adw.PreferencesGroup({ title: _('Password Vault Settings') });
 
+        this.password_vault.add(this.field_vault_enabled);
         this.password_vault.add(this.field_password_vault_path);
+        this.password_vault.add(this.field_vault_pin_recent);
+        this.password_vault.add(this.field_vault_hide_all_category);
+        this.password_vault.add(this.field_vault_copy_to_history);
 
         this.ui.add(this.field_preview_size);
         this.ui.add(this.field_confirm_clear_toggle);
@@ -288,6 +322,8 @@ class Settings {
         this.ui.add(this.field_show_private_mode);
         this.ui.add(this.field_show_settings_button);
         this.ui.add(this.field_show_clear_history_button);
+        this.ui.add(this.field_colorize_clipboard);
+        this.ui.add(this.field_fetch_youtube_titles);
 
         this.behavior.add(this.field_strip_text);
         this.behavior.add(this.field_move_item_first);
@@ -363,6 +399,12 @@ class Settings {
         this.schema.bind(PrefsFields.SHOW_PIN_BUTTON, this.field_show_pin_button, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.SHOW_EDIT_BUTTON, this.field_show_edit_button, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.SHOW_PREVIEW_BUTTON, this.field_show_preview_button, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.COLORIZE_CLIPBOARD, this.field_colorize_clipboard, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.FETCH_YOUTUBE_TITLES, this.field_fetch_youtube_titles, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_PIN_RECENT, this.field_vault_pin_recent, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_HIDE_ALL_CATEGORY, this.field_vault_hide_all_category, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_ENABLED, this.field_vault_enabled, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_COPY_TO_HISTORY, this.field_vault_copy_to_history, 'active', Gio.SettingsBindFlags.DEFAULT);
 
         this.field_clear_history_interval.set_sensitive(this.field_clear_history_on_interval.active);
         this.#fetchExludedAppsList();

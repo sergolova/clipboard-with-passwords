@@ -1,7 +1,9 @@
 import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
+import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
+import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
@@ -66,6 +68,10 @@ let SHOW_TAG_BUTTON = true;
 let SHOW_PIN_BUTTON = true;
 let SHOW_EDIT_BUTTON = true;
 let SHOW_PREVIEW_BUTTON = true;
+let COLORIZE_CLIPBOARD = true;
+let FETCH_YOUTUBE_TITLES = true;
+let VAULT_ENABLED = true;
+let VAULT_COPY_TO_HISTORY = false;
 
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
@@ -105,6 +111,7 @@ const ClipboardIndicator = GObject.registerClass({
         this.#closeImagePreview();
         this._removeHistoryLabel();
         this._destroyNotifSource();
+        this._destroyAutoLock();
         this.dialogManager.destroy();
         this.keyboard.destroy();
         this._cursorActor.destroy();
@@ -157,6 +164,8 @@ const ClipboardIndicator = GObject.registerClass({
         this.ignoreNextClipboardChange = false;
         this.isVaultMode = false;
         this.keyboard = new Keyboard();
+        this._unlockedVaultPath = null;
+        this._setupAutoLock();
         this._settingsChangedId = null;
         this._selectionOwnerChangedId = null;
         this._historyLabel = null;
@@ -458,8 +467,14 @@ const ClipboardIndicator = GObject.registerClass({
         if (!this.passwordVaultMenuSection) {
             const copyVaultCallback = (text) => {
                 if (!text) return;
-                this.ignoreNextClipboardChange = true;
-                this.extension.clipboard.set_text(CLIPBOARD_TYPE, text);
+                if (VAULT_COPY_TO_HISTORY) {
+                    // Let the normal clipboard watcher pick this up so the
+                    // value lands in the main clipboard history too.
+                    this.extension.clipboard.set_text(CLIPBOARD_TYPE, text);
+                } else {
+                    this.ignoreNextClipboardChange = true;
+                    this.extension.clipboard.set_text(CLIPBOARD_TYPE, text);
+                }
                 if (NOTIFY_ON_COPY) {
                     this._showNotification(_("Copied from vault"));
                 }
@@ -479,7 +494,8 @@ const ClipboardIndicator = GObject.registerClass({
                         this.passwordVaultMenuSection.refreshUI();
                     }
                 },
-                closeMenuCallback
+                closeMenuCallback,
+                this.extension.settings
             );
             this.menu.addMenuItem(this.passwordVaultMenuSection);
         }
@@ -702,20 +718,31 @@ const ClipboardIndicator = GObject.registerClass({
         const {entry} = menuItem;
         if (entry.isURIList()) {
             menuItem.label.hide();
+            if (menuItem._twoLineBox) {
+                if (menuItem.actor.contains(menuItem._twoLineBox)) {
+                    menuItem.actor.remove_child(menuItem._twoLineBox);
+                }
+                menuItem._twoLineBox = null;
+            }
             const display = entry.getURIListDisplay();
             if (display) {
                 const box = new St.BoxLayout({vertical: true, x_expand: true});
 
-                // Line 1: N file(s) in /path
+                // Line 1: N file(s) in /path — truncate so a long path cannot
+                // stretch the whole menu off-screen.
                 const summaryLabel = new St.Label({
-                    text: `${display.count} ${_('file(s) in')} ${display.commonPath || '/'}`,
+                    text: this._truncate(`${display.count} ${_('file(s) in')} ${display.commonPath || '/'}`, MAX_ENTRY_LENGTH),
                     x_expand: true
                 });
+                summaryLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 box.add_child(summaryLabel);
 
-                // Line 2: file names — show at most 5, truncate to 80 chars
+                // Line 2: file names — dedupe repeated URIs, show at most 5,
+                // truncate to 80 chars, ellipsize as a second guard.
                 const maxShown = 5;
-                const shown = display.fileNames.slice(0, maxShown);
+                let shown = display.fileNames.filter((f, i) =>
+                    f && display.fileNames.indexOf(f) === i).slice(0, maxShown);
+                if (shown.length === 0) shown = display.fileNames.slice(0, maxShown);
                 let fileText = shown.join(',  ');
                 if (display.fileNames.length > maxShown) {
                     fileText += ', …';
@@ -729,6 +756,7 @@ const ClipboardIndicator = GObject.registerClass({
                     style_class: 'clipboard-second-line',
                     x_expand: true
                 });
+                fileNamesLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 box.add_child(fileNamesLabel);
 
                 if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
@@ -740,6 +768,12 @@ const ClipboardIndicator = GObject.registerClass({
             }
         } else if (entry.isColor()) {
             menuItem.label.hide();
+            if (menuItem._twoLineBox) {
+                if (menuItem.actor.contains(menuItem._twoLineBox)) {
+                    menuItem.actor.remove_child(menuItem._twoLineBox);
+                }
+                menuItem._twoLineBox = null;
+            }
             const colorText = entry.getStringValue().trim();
             const cssColor = entry.needsHashPrefix(colorText) ? ('#' + colorText) : colorText;
             const box = new St.BoxLayout({
@@ -793,7 +827,8 @@ const ClipboardIndicator = GObject.registerClass({
             const rawText = entry.isPassword() ? entry.getMaskedValue() : entry.getStringValue();
             const urlText = rawText.trim();
 
-            if (!entry.isPassword() && entry.isURL() && this.urlMetadataManager && this.urlMetadataManager.canHandle(urlText)) {
+            if (!entry.isPassword() && entry.isURL() && FETCH_YOUTUBE_TITLES &&
+                this.urlMetadataManager && this.urlMetadataManager.canHandle(urlText)) {
                 const cachedMeta = this.urlMetadataManager.getCachedMetadata(urlText);
                 if (cachedMeta && cachedMeta.title) {
                     this._renderTwoLineBox(menuItem, this._truncate(urlText, MAX_ENTRY_LENGTH), this._truncate(cachedMeta.title, 80));
@@ -836,6 +871,42 @@ const ClipboardIndicator = GObject.registerClass({
                 menuItem.previewImage = img;
                 menuItem.insert_child_below(img, menuItem.label);
             });
+        }
+    }
+
+    _updateTypeStyle(menuItem) {
+        const TYPE_CLASSES = [
+            'clipboard-type-file',
+            'clipboard-type-color',
+            'clipboard-type-url',
+            'clipboard-type-email',
+            'clipboard-type-image',
+            'clipboard-type-multiline',
+            'clipboard-type-password'
+        ];
+        TYPE_CLASSES.forEach(c => menuItem.actor.remove_style_class_name(c));
+
+        if (!COLORIZE_CLIPBOARD) {
+            return;
+        }
+
+        const {entry} = menuItem;
+        if (entry.isURIList()) {
+            menuItem.actor.add_style_class_name('clipboard-type-file');
+        } else if (entry.isColor()) {
+            menuItem.actor.add_style_class_name('clipboard-type-color');
+        } else if (entry.isURL()) {
+            menuItem.actor.add_style_class_name('clipboard-type-url');
+        } else if (entry.isEmail()) {
+            menuItem.actor.add_style_class_name('clipboard-type-email');
+        } else if (entry.isImage()) {
+            menuItem.actor.add_style_class_name('clipboard-type-image');
+        } else if (entry.isMultiline()) {
+            menuItem.actor.add_style_class_name('clipboard-type-multiline');
+        }
+
+        if (entry.isPassword()) {
+            menuItem.actor.add_style_class_name('clipboard-type-password');
         }
     }
 
@@ -953,23 +1024,7 @@ const ClipboardIndicator = GObject.registerClass({
         this._setEntryLabel(menuItem);
 
         // Type-based styling
-        if (entry.isURIList()) {
-            menuItem.actor.add_style_class_name('clipboard-type-file');
-        } else if (entry.isColor()) {
-            menuItem.actor.add_style_class_name('clipboard-type-color');
-        } else if (entry.isURL()) {
-            menuItem.actor.add_style_class_name('clipboard-type-url');
-        } else if (entry.isEmail()) {
-            menuItem.actor.add_style_class_name('clipboard-type-email');
-        } else if (entry.isImage()) {
-            menuItem.actor.add_style_class_name('clipboard-type-image');
-        } else if (entry.isMultiline()) {
-            menuItem.actor.add_style_class_name('clipboard-type-multiline');
-        }
-
-        if (entry.isPassword()) {
-            menuItem.actor.add_style_class_name('clipboard-type-password');
-        }
+        this._updateTypeStyle(menuItem);
 
         this.clipItemsRadioGroup.push(menuItem);
 
@@ -1246,7 +1301,7 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     #updatePasswordStyle(menuItem) {
-        if (menuItem.entry.isPassword()) {
+        if (COLORIZE_CLIPBOARD && menuItem.entry.isPassword()) {
             menuItem.actor.add_style_class_name('clipboard-type-password');
         } else {
             menuItem.actor.remove_style_class_name('clipboard-type-password');
@@ -1737,12 +1792,22 @@ const ClipboardIndicator = GObject.registerClass({
         SHOW_PIN_BUTTON = settings.get_boolean(PrefsFields.SHOW_PIN_BUTTON);
         SHOW_EDIT_BUTTON = settings.get_boolean(PrefsFields.SHOW_EDIT_BUTTON);
         SHOW_PREVIEW_BUTTON = settings.get_boolean(PrefsFields.SHOW_PREVIEW_BUTTON);
+        COLORIZE_CLIPBOARD = settings.get_boolean(PrefsFields.COLORIZE_CLIPBOARD);
+        FETCH_YOUTUBE_TITLES = settings.get_boolean(PrefsFields.FETCH_YOUTUBE_TITLES);
+        VAULT_ENABLED = settings.get_boolean(PrefsFields.VAULT_ENABLED);
+        VAULT_COPY_TO_HISTORY = settings.get_boolean(PrefsFields.VAULT_COPY_TO_HISTORY);
     }
 
     async _onSettingsChange() {
         try {
             // Load the settings into variables
             this._fetchSettings();
+
+            // If the vault got disabled while it was open, drop back to the
+            // regular clipboard list.
+            if (!VAULT_ENABLED && this.isVaultMode) {
+                this._showHistoryMenu();
+            }
 
             // If the toggle is hidden but private mode is on, force it off now
             if (!SHOW_PRIVATE_MODE && PRIVATEMODE && this.privateModeMenuItem) {
@@ -1756,6 +1821,7 @@ const ClipboardIndicator = GObject.registerClass({
             // Re-set menu-items lables in case preview size changed
             this._getAllIMenuItems().forEach(mItem => {
                 this._setEntryLabel(mItem);
+                this._updateTypeStyle(mItem);
                 mItem.pasteBtn.visible = PASTE_BUTTON;
                 mItem.icoBtn.visible = SHOW_DELETE_BUTTON;
                 mItem.tagBtn.visible = SHOW_TAG_BUTTON;
@@ -1793,6 +1859,10 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     async openPasswordVault() {
+        if (!VAULT_ENABLED) {
+            return;
+        }
+
         const vaultPath = this.extension.settings.get_string(PrefsFields.PASSWORD_VAULT_PATH);
         if (vaultPath) {
             this.vaultManager.setZipPath(vaultPath);
@@ -1802,17 +1872,24 @@ const ClipboardIndicator = GObject.registerClass({
             this.menu.close();
         }
 
+        // The vault file moved while we were unlocked: require the master
+        // password again instead of silently writing to the new path.
+        if (this.vaultManager.isUnlocked() &&
+            this._unlockedVaultPath &&
+            this._unlockedVaultPath !== this.vaultManager.zipPath) {
+            this.vaultManager.lock();
+            this._unlockedVaultPath = null;
+        }
+
         if (!this.vaultManager.isUnlocked()) {
             const dialog = new MasterPasswordDialog(
                 _('Password Vault'),
                 _('Enter the master password to unlock:'),
                 async (pwd) => {
-                    try {
-                        await this.vaultManager.unlock(pwd);
-                        return true;
-                    } catch (e) {
-                        return false;
-                    }
+                    // Let exceptions reach the dialog: it displays e.message.
+                    await this.vaultManager.unlock(pwd);
+                    this._unlockedVaultPath = this.vaultManager.zipPath;
+                    return true;
                 }
             );
             dialog.connect('closed', () => {
@@ -1823,6 +1900,89 @@ const ClipboardIndicator = GObject.registerClass({
             dialog.open();
         } else {
             this._showVaultMenu();
+        }
+    }
+
+    _setupAutoLock() {
+        // Screen lock: gnome-shell exposes org.gnome.ScreenSaver on the
+        // session bus for compatibility (works on X11 and Wayland).
+        try {
+            const iface = '<node><interface name="org.gnome.ScreenSaver"><signal name="Locked"/></interface></node>';
+            const proxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION,
+                Gio.DBusProxyFlags.NONE,
+                null,
+                'org.gnome.ScreenSaver',
+                '/org/gnome/ScreenSaver',
+                iface,
+                null
+            );
+            if (proxy) {
+                this._screenSaverProxy = proxy;
+                this._screenSaverSignalId = proxy.connectSignal('Locked', () => this._autoLockVault());
+            }
+        } catch (e) {
+            console.warn('Clipboard Indicator: cannot subscribe to screen lock:', e);
+        }
+
+        // Suspend / resume (system bus, requires a non-sandboxed extension).
+        try {
+            const iface = '<node><interface name="org.freedesktop.login1.Manager"><signal name="PrepareForSleep"><arg type="b"/></signal></interface></node>';
+            const proxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SYSTEM,
+                Gio.DBusProxyFlags.NONE,
+                null,
+                'org.freedesktop.login1',
+                '/org/freedesktop/login1',
+                iface,
+                null
+            );
+            if (proxy) {
+                this._login1Proxy = proxy;
+                this._login1SignalId = proxy.connectSignal('PrepareForSleep',
+                    (proxy, senderName, signalName, parameters) => {
+                        const sleeping = parameters && parameters[0] === true;
+                        if (sleeping) {
+                            this._autoLockVault();
+                        }
+                    }
+                );
+            }
+        } catch (e) {
+            console.warn('Clipboard Indicator: cannot subscribe to suspend:', e);
+        }
+    }
+
+    _destroyAutoLock() {
+        if (this._screenSaverProxy && this._screenSaverSignalId) {
+            try {
+                this._screenSaverProxy.disconnectSignal(this._screenSaverSignalId);
+            } catch (e) {
+            }
+        }
+        if (this._login1Proxy && this._login1SignalId) {
+            try {
+                this._login1Proxy.disconnectSignal(this._login1SignalId);
+            } catch (e) {
+            }
+        }
+        this._screenSaverProxy = null;
+        this._login1Proxy = null;
+        this._screenSaverSignalId = null;
+        this._login1SignalId = null;
+    }
+
+    _autoLockVault() {
+        if (!this.vaultManager || !this.vaultManager.isUnlocked()) {
+            return;
+        }
+        if (this.menu && this.menu.isOpen) {
+            this.menu.close();
+        }
+        this.vaultManager.lock();
+        this._unlockedVaultPath = null;
+        if (!this._destroyed) {
+            Main.notify(_('Password Vault'), _('The password vault has been locked.'));
         }
     }
 
