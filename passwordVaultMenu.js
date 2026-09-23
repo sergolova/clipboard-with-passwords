@@ -225,9 +225,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         topBar.add_child(this.searchEntry);
 
         let clearSearchBtn = new St.Button({
-            label: '✖',
             style_class: 'button',
-            style: 'padding: 4px 8px; font-size: 11px;'
+            style: 'padding: 4px 8px;',
+            accessible_name: _('Clear search'),
+            child: new St.Icon({icon_name: 'edit-clear-symbolic', icon_size: 12})
         });
         clearSearchBtn.connect('clicked', () => {
             this.searchEntry.set_text('');
@@ -237,9 +238,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         topBar.add_child(clearSearchBtn);
 
         let addBtn = new St.Button({
-            label: '➕',
             style_class: 'button',
-            style: 'padding: 4px 10px; font-weight: bold;'
+            style: 'padding: 4px 10px;',
+            accessible_name: _('Add service'),
+            child: new St.Icon({icon_name: 'list-add-symbolic', icon_size: 12})
         });
         addBtn.connect('clicked', () => {
             this._openEditDialog(null);
@@ -279,9 +281,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         let recentHeader = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
 
         let recentEditBtn = new St.Button({
-            label: '✏️',
             style_class: 'button',
-            style: 'padding: 0 4px; font-size: 10px;'
+            style: 'padding: 0 4px;',
+            accessible_name: _('Edit recent service'),
+            child: new St.Icon({icon_name: 'document-edit-symbolic', icon_size: 12})
         });
         recentEditBtn.connect('clicked', () => {
             this._openEditDialog(recent, 'name');
@@ -299,9 +302,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         recentHeader.add_child(recentNameLabel);
 
         let clearRecentBtn = new St.Button({
-            label: '✖',
             style_class: 'button',
-            style: 'padding: 0 4px; font-size: 10px;'
+            style: 'padding: 0 4px;',
+            accessible_name: _('Clear recent service'),
+            child: new St.Icon({icon_name: 'edit-clear-symbolic', icon_size: 12})
         });
         clearRecentBtn.connect('clicked', () => {
             this.vaultManager.setRecentService(null);
@@ -471,9 +475,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         titleBar.add_child(copyAllBtn);
 
         let editCardBtn = new St.Button({
-            label: '✏️',
             style_class: 'button',
-            style: 'padding: 2px 6px; font-size: 11px;'
+            style: 'padding: 2px 6px;',
+            accessible_name: _('Edit service'),
+            child: new St.Icon({icon_name: 'document-edit-symbolic', icon_size: 12})
         });
         editCardBtn.connect('clicked', () => {
             this._openEditDialog(item, 'name');
@@ -571,22 +576,28 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         if (isPassword) {
             let toggleBtn = new St.Button({
-                label: '👁️',
                 style_class: 'button',
-                style: 'padding: 1px 4px; font-size: 11px;'
+                style: 'padding: 1px 4px;',
+                accessible_name: _('Reveal value'),
+                child: new St.Icon({
+                    icon_name: 'view-reveal-symbolic',
+                    icon_size: 12
+                })
             });
             toggleBtn.connect('clicked', () => {
                 showState.hidden = !showState.hidden;
                 valueWidget.set_text(showState.hidden ? '••••••••' : valueStr);
-                toggleBtn.set_label(showState.hidden ? '👁️' : '🙈');
+                toggleBtn.child.icon_name = showState.hidden ? 'view-reveal-symbolic' : 'view-conceal-symbolic';
+                toggleBtn.accessible_name = showState.hidden ? _('Reveal value') : _('Hide value');
             });
             row.add_child(toggleBtn);
         }
 
         let editBtn = new St.Button({
-            label: '✏️',
             style_class: 'button',
-            style: 'padding: 1px 4px; font-size: 11px;'
+            style: 'padding: 1px 4px;',
+            accessible_name: _('Edit value'),
+            child: new St.Icon({icon_name: 'document-edit-symbolic', icon_size: 12})
         });
         editBtn.connect('clicked', () => {
             this._openEditDialog(item, fieldName);

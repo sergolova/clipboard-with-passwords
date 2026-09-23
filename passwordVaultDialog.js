@@ -14,10 +14,11 @@ import { themeColors } from './theme.js';
 // extension uses to build its history.)
 function createPasteButton(entry) {
     let btn = new St.Button({
-        label: '📋',
         style_class: 'button',
         can_focus: false,
-        style: 'padding: 2px 6px; font-size: 13px;'
+        style: 'padding: 2px 6px;',
+        accessible_name: _('Paste'),
+        child: new St.Icon({icon_name: 'edit-paste-symbolic', icon_size: 14})
     });
     btn.connect('clicked', () => {
         St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_clipboard, text) => {
@@ -270,11 +271,27 @@ export const ServiceEditDialog = GObject.registerClass(
             pwdBox.add_child(this.pwdEntry);
             if (focusFieldName === 'password') this.focusTargetWidget = this.pwdEntry;
 
+            let genBox = new St.BoxLayout({
+                vertical: false,
+                style: 'spacing: 4px;'
+            });
+            genBox.add_child(new St.Icon({
+                icon_name: 'view-refresh-symbolic',
+                icon_size: 12,
+                y_align: Clutter.ActorAlign.CENTER
+            }));
+            genBox.add_child(new St.Label({
+                text: _('16 chars'),
+                style: 'font-size: 11px;',
+                y_align: Clutter.ActorAlign.CENTER
+            }));
+
             let genBtn = new St.Button({
-                label: '🎲 ' + _('16 chars'),
                 style_class: 'button',
                 can_focus: false,
-                style: 'padding: 4px 8px; font-size: 11px;'
+                style: 'padding: 4px 8px;',
+                accessible_name: _('Generate password (16 characters)'),
+                child: genBox
             });
             genBtn.connect('clicked', () => {
                 const newPwd = generatePassword(16);
@@ -326,7 +343,7 @@ export const ServiceEditDialog = GObject.registerClass(
 
             if (serviceItem && onDelete) {
                 buttons.push({
-                    label: '🗑️ ' + _('Delete'),
+                    label: _('Delete'),
                     action: () => {
                         this._confirmDelete(() => {
                             this.close();
@@ -533,18 +550,26 @@ export const ServiceEditDialog = GObject.registerClass(
             }
 
             let hideBtn = new St.Button({
-                label: isHidden ? '🙈' : '👁️',
                 style_class: 'button',
                 can_focus: false,
-                style: 'padding: 2px 6px; font-size: 11px;',
-                accessible_name: _('Hide value')
+                style: 'padding: 2px 6px;',
+                accessible_name: isHidden ? _('Reveal value') : _('Hide value'),
+                child: new St.Icon({
+                    icon_name: isHidden ? 'view-reveal-symbolic' : 'view-conceal-symbolic',
+                    icon_size: 12
+                })
             });
 
             let delBtn = new St.Button({
-                label: '✖',
                 style_class: 'button',
                 can_focus: false,
-                style: `padding: 2px 6px; color: ${themeColors().error};`
+                style: 'padding: 2px 6px;',
+                accessible_name: _('Remove field'),
+                child: new St.Icon({
+                    icon_name: 'edit-delete-symbolic',
+                    icon_size: 12,
+                    style: `color: ${themeColors().error};`
+                })
             });
 
             rowBox.add_child(labelEntry);
@@ -563,7 +588,8 @@ export const ServiceEditDialog = GObject.registerClass(
             hideBtn.connect('clicked', () => {
                 rowData.isHidden = !rowData.isHidden;
                 valueEntry.clutter_text.password_char = rowData.isHidden ? '•'.charCodeAt(0) : 0;
-                hideBtn.set_label(rowData.isHidden ? '🙈' : '👁️');
+                hideBtn.child.icon_name = rowData.isHidden ? 'view-reveal-symbolic' : 'view-conceal-symbolic';
+                hideBtn.accessible_name = rowData.isHidden ? _('Reveal value') : _('Hide value');
             });
 
             delBtn.connect('clicked', () => {
