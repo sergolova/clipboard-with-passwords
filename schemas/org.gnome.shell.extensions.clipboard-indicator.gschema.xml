@@ -186,6 +186,15 @@
       <default>false</default>
       <summary>Hide services when the "All" category is selected until the user types in the search box</summary>
     </key>
+    <key name="vault-password-request" type="s">
+      <default>'session'</default>
+      <summary>When the password vault asks for the master password</summary>
+      <description>session = ask once per desktop session (auto-lock on screen lock and suspend); every-open = ask every time the vault is opened; after-sleep = keep the unlock, but re-ask only after the system wakes from sleep</description>
+    </key>
+    <key name="vault-reset-search-on-close" type="b">
+      <default>true</default>
+      <summary>Reset the vault search filter when the vault menu closes</summary>
+    </key>
     <key name="colorize-clipboard" type="b">
       <default>true</default>
       <summary>Colorize clipboard entries by content type</summary>

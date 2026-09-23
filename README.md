@@ -20,6 +20,10 @@ Clipboard entries are detected and visually distinguished by their content type,
 | **HTML/CSS colors** | predefined color names + hex codes (`#ff5500`) get a real color swatch preview |
 | **Images** | thumbnails with a preview button |
 
+<p align="center">
+  <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="400"/>
+</p>
+
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
 
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
@@ -32,6 +36,10 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 - The archive is a **standard encrypted ZIP** — it can be read and edited outside the extension (see [The vault archive](#the-vault-archive)).
 - The archive contains a single `passwords.json` file, which can also be edited manually.
 - Access is protected by a **master password**.
+
+<p align="center">
+  <img src="screenshots/vault-cards.png" alt="Password vault with service cards" height="400"/>
+</p>
 
 > 🖱️ **Left-click** on the panel icon opens the regular clipboard list; **right-click**
 > opens the password vault (or use the «Toggle Password Vault» shortcut — it has
@@ -46,15 +54,51 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 ### 🏷️ Flexible service records
 - Besides the standard **login** and **password**, each service supports **arbitrary custom fields** (e.g. 2FA code, PIN, recovery key).
 - Each custom field can be **hidden** (shown as `••••••••`, toggleable with one click).
+- **Hidden-field safety check** — a ⚠️ warning icon is shown next to any hidden
+  value (password or custom field) that **starts or ends with a space, a line
+  break or a non-printable character** (zero-width space, BOM, control char…).
+  Such edge characters are invisible behind the dots and are almost always a
+  typo (stray space, paste artifact) — the warning makes them visible at a glance.
+
+<p align="center">
+  <img src="screenshots/vault-warning-icon.png" alt="Warning icon next to a hidden field with a stray leading/trailing character" height="150"/>
+</p>
+
+Card buttons (vault):
+
+| Icon | What it does |
+| --- | --- |
+| 👁️ / 🙈 | Reveal / hide the hidden value |
+| ✏️ | Open the service in the edit dialog |
+| ⚠️ | **Warning indicator** — the hidden value has invisible leading/trailing characters (see above); not a button |
+
+Dialog buttons (service edit dialog):
+
+| Icon | What it does |
+| --- | --- |
+| 📋 | Paste the current clipboard content into the focused field (X11 workaround for Ctrl+V) |
+| 🎲 | Generate a random 16-character password |
+| ➕ | Add a custom field |
+| 🗑️ | Delete the service |
+| ✖ | Close the dialog |
+
+<p align="center">
+  <img src="screenshots/service-edit-dialog.png" alt="Service edit dialog" height="450"/>
+</p>
 
 ### 🔍 Vault search & filter
 - Convenient filter to search services **by name, description and login** (also matches category and custom field labels/values).
 - Categories with no services are hidden automatically; the bar re-layouts to fill the menu width.
 - The **last used service** stays pinned at the top of the vault for quick access — pinning can be disabled in settings («Pin last used service card»).
 - **«All» privacy mode** — with the setting «Hide services in the 'All' view» the vault shows *nothing* when the «All» category is selected; entries appear only while you type in the search box, and category counts are hidden as well.
+- **Search filter resets on close** by default («Reset vault search on close»): closing the vault menu clears the search box, so the next open starts with the full list. Disable the setting if you want the query to persist between opens.
+
+<p align="center">
+  <img src="screenshots/vault-search.png" alt="Vault search results" height="300"/>
+</p>
 
 ### 📋 Convenience
-- **«Copy all»** button — copies login, password and all custom fields at once, formatted as `ключ: значение` multi-line text.
+- **«Copy all»** (🗐) button — copies login, password and all custom fields at once, formatted as `key: value` multi-line text.
 - **Paste buttons** (📋) — insert the current clipboard content into dialogs on **X11**, where native Ctrl+V may silently fail inside shell dialogs.
 - Clipboard menu: pinned and regular history are separated by a proper divider.
 
@@ -73,7 +117,49 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 
 ## Installation
 
-Install the extension by symlinking your source checkout into GNOME's extensions directory:
+The extension installs as a plain directory under GNOME's extensions folder:
+`~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova/`.
+Pick the way that fits you:
+
+### 📦 From a downloaded ZIP
+
+Download the repository as a ZIP from GitHub (green **Code ▾ → Download ZIP**
+button, or [this direct link](https://github.com/sergolova/clipboard-with-passwords/archive/refs/heads/clipboard-with-passwords.zip)),
+then unpack and copy it:
+
+```bash
+mkdir -p ~/.local/share/gnome-shell/extensions
+
+unzip clipboard-with-passwords-clipboard-with-passwords.zip
+cp -r clipboard-with-passwords-clipboard-with-passwords \
+    ~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova
+```
+
+### 🖥️ One-liner via `curl`
+
+Same result without the browser — download the ZIP and unpack it straight into
+the extensions folder:
+
+```bash
+mkdir -p ~/.local/share/gnome-shell/extensions
+
+curl -L https://github.com/sergolova/clipboard-with-passwords/archive/refs/heads/clipboard-with-passwords.zip \
+    -o /tmp/clipboard-with-passwords.zip
+unzip -oq /tmp/clipboard-with-passwords.zip -d /tmp/clipboard-with-passwords
+cp -r /tmp/clipboard-with-passwords/clipboard-with-passwords-clipboard-with-passwords \
+    ~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova
+```
+
+> 🛡️ **Verify what you are downloading.** `curl` fetches the ZIP over HTTPS and
+> unpacks it, but nothing else protects you from a tampered archive — compare
+> the file size against the ZIP from GitHub's web UI, or `sha256sum` it against
+> a value only you trust. Untrusted content executing inside your GNOME Shell
+> runs with your user's privileges.
+
+### 🧑💻 For development (symlink to a source checkout)
+
+Developers keep a symlink so edits are live on disk (JS is loaded from the
+symlinked repo — see `AGENTS.md`):
 
 ```bash
 mkdir -p ~/.local/share/gnome-shell/extensions
@@ -81,7 +167,19 @@ ln -s /path/to/clipboard-with-passwords \
     ~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova
 ```
 
-Then restart the shell (`Alt+F2` → `r`) or log out and back in, and enable the extension in **GNOME Extensions** (or with `gnome-extensions enable clipboard-with-passwords@sergolova`).
+A symlinked copy needs the **compiled schema and translations** — build them
+from the checkout first:
+
+```bash
+glib-compile-schemas --strict --targetdir=schemas/ schemas
+make
+```
+
+### ▶️ After installing (any method)
+
+Restart the shell (`Alt+F2` → `r`) or log out and back in, then enable the
+extension in **GNOME Extensions** (or with
+`gnome-extensions enable clipboard-with-passwords@sergolova`).
 
 > ℹ️ Windows/menus are auto-created on first use. History and settings are stored under
 > `~/.cache/clipboard-with-passwords@sergolova` and in the GSettings schema
@@ -91,7 +189,7 @@ Then restart the shell (`Alt+F2` → `r`) or log out and back in, and enable the
 
 The vault is a standard encrypted ZIP archive that contains a single `passwords.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
-Keep the archive file (`passwords.zip`) in a **protected location** — do not put it in
+Keep the archive file (e.g. `passwords.zip`) in a **protected location** — do not put it in
 a world-readable directory. Anyone with read access to the file can attempt to crack it,
 and the `.bak` copy next to it contains it too.
 
@@ -126,8 +224,8 @@ Each save also keeps a `.bak` copy of the previous archive next to it.
     {
       "id": "service_1737528540000_123",
       "name": "GitHub",
-      "category": "Работа",
-      "description": "Основной аккаунт разработчика",
+      "category": "Work",
+      "description": "Primary Developer Account",
       "login": "sergolova",
       "password": "s3cret-p@ss",
       "extraFields": [
@@ -165,16 +263,23 @@ Field reference:
 
 **When the master password is requested.** The password is asked only when the
 vault is opened (the «Toggle Password Vault» shortcut, right-click the panel
-icon, or the menu item) and is **not unlocked yet**. The vault stays unlocked in
-memory for the whole session — until one of the events below — so you are **not**
-prompted on every open.
+icon, or the menu item) and is **not unlocked yet**. How often the password is
+requested is configurable (*Settings → Password Vault → «When to ask for the
+master password»*):
 
-**Screen lock & suspend.** The vault is **auto-locked** when the screen locks
-(wallpaper / `Super+L`) and when the machine goes to sleep: the vault menu (if
-open) closes, a «vault locked» notification is shown, and the master password
-is required again after waking up. This also happens when the vault file path
-in the settings is changed while the vault was unlocked — the new path is never
-written to without re-authentication.
+| Mode | Behavior |
+| --- | --- |
+| **Once per session** (default) | The master password is asked once; the vault stays unlocked in memory for the whole session, so you are **not** prompted on every open. |
+| **After system sleep** | Like the default, **but** a plain screen lock (wallpaper / `Super+L`) is *not* enough to re-lock the vault — the master password is requested again **only** after the machine actually wakes from sleep. |
+| **Every time the vault is opened** | The master password is requested on **every** opening, even if the vault is still unlocked in memory. |
+
+**Screen lock & suspend.** By default the vault is **auto-locked** when the
+screen locks (wallpaper / `Super+L`) and when the machine goes to sleep: the
+vault menu (if open) closes, a «vault locked» notification is shown, and the
+master password is required again after waking up. In **«After system sleep»**
+mode only a real suspend triggers this auto-lock. The vault is also locked when
+the vault file path in the settings is changed while the vault was unlocked —
+the new path is never written to without re-authentication.
 
 **Logout / shell restart / reboot.** Nothing extra needs to be done — every
 change is saved to the archive immediately, so the file on disk is always the
@@ -207,6 +312,10 @@ reason). Fix the path in the extension settings and try again.
 
 Compared to the original extension, these settings were added:
 
+<p align="center">
+  <img src="screenshots/settings.png" alt="Extension settings window" height="600"/>
+</p>
+
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `password-vault-path` | string | `~/.config/clipboard-indicator/passwords.zip` | Path to the encrypted vault ZIP archive |
@@ -215,6 +324,8 @@ Compared to the original extension, these settings were added:
 | `toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
 | `vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
 | `vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |
+| `vault-password-request` | string | `session` | When to ask for the master password: `session` (once per session), `after-sleep` (re-ask only after a real suspend, plain screen lock keeps the vault unlocked), `every-open` (ask on every vault opening) |
+| `vault-reset-search-on-close` | boolean | `true` | Reset the vault search filter when the vault menu closes |
 | `colorize-clipboard` | boolean | `true` | Colorize clipboard entries by content type |
 | `fetch-youtube-titles` | boolean | `false` | Fetch and show YouTube video titles for copied links. ⚠️ Enabling this sends the copied YouTube link (clipboard data) to a third party — `https://www.youtube.com/oembed` |
 

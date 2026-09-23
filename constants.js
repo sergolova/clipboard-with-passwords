@@ -49,6 +49,8 @@ export const PrefsFields = {
     VAULT_COPY_TO_HISTORY           : 'vault-copy-to-history',
     VAULT_PIN_RECENT                : 'vault-pin-recent',
     VAULT_HIDE_ALL_CATEGORY         : 'vault-hide-all-category',
+    VAULT_PASSWORD_REQUEST          : 'vault-password-request',
+    VAULT_RESET_SEARCH_ON_CLOSE     : 'vault-reset-search-on-close',
     COLORIZE_CLIPBOARD              : 'colorize-clipboard',
     FETCH_YOUTUBE_TITLES            : 'fetch-youtube-titles',
     BINDING_TOGGLE_PASSWORD_VAULT   : 'toggle-password-vault',

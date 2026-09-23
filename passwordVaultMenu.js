@@ -326,6 +326,17 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         }
     }
 
+    resetSearch() {
+        if (!this.currentQuery && (!this.searchEntry || this.searchEntry.get_text() === '')) {
+            return;
+        }
+        this.currentQuery = '';
+        if (this.searchEntry) {
+            this.searchEntry.set_text('');
+        }
+        this._applyFilter();
+    }
+
     _renderAllCards() {
         this.itemsBox.destroy_all_children();
         this.serviceCardEntries = [];

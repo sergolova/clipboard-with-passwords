@@ -74,6 +74,8 @@ let COLORIZE_CLIPBOARD = true;
 let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
 let VAULT_COPY_TO_HISTORY = false;
+let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
+let VAULT_RESET_SEARCH_ON_CLOSE = true;
 
 /*
  * Strip leading/trailing whitespace from a text value according to the
@@ -1996,6 +1998,16 @@ const ClipboardIndicator = GObject.registerClass({
         FETCH_YOUTUBE_TITLES = settings.get_boolean(PrefsFields.FETCH_YOUTUBE_TITLES);
         VAULT_ENABLED = settings.get_boolean(PrefsFields.VAULT_ENABLED);
         VAULT_COPY_TO_HISTORY = settings.get_boolean(PrefsFields.VAULT_COPY_TO_HISTORY);
+        try {
+            VAULT_PASSWORD_REQUEST = settings.get_string(PrefsFields.VAULT_PASSWORD_REQUEST);
+        } catch (e) {
+            VAULT_PASSWORD_REQUEST = 'session';
+        }
+        try {
+            VAULT_RESET_SEARCH_ON_CLOSE = settings.get_boolean(PrefsFields.VAULT_RESET_SEARCH_ON_CLOSE);
+        } catch (e) {
+            VAULT_RESET_SEARCH_ON_CLOSE = true;
+        }
     }
 
     async _onSettingsChange() {
@@ -2091,7 +2103,19 @@ const ClipboardIndicator = GObject.registerClass({
             this._unlockedVaultPath = null;
         }
 
-        if (!this.vaultManager.isUnlocked()) {
+        // "every-open" mode: the master password is asked on every opening,
+        // even if the vault is still unlocked in memory. Re-lock it first so
+        // that the dialog actually gates access — otherwise closing the dialog
+        // would fall through to the "unlocked" branch below.
+        if (VAULT_PASSWORD_REQUEST === 'every-open' &&
+            this.vaultManager.isUnlocked()) {
+            this.vaultManager.lock();
+            this._unlockedVaultPath = null;
+        }
+
+        const askPassword = !this.vaultManager.isUnlocked();
+
+        if (askPassword) {
             const dialog = new MasterPasswordDialog(
                 _('Password Vault'),
                 _('Enter the master password to unlock:'),
@@ -2136,7 +2160,8 @@ const ClipboardIndicator = GObject.registerClass({
             );
             if (proxy) {
                 this._screenSaverProxy = proxy;
-                this._screenSaverSignalId = proxy.connectSignal('Locked', () => this._autoLockVault());
+                this._screenSaverSignalId = proxy.connectSignal('Locked',
+                    () => this._autoLockVault('screen-lock'));
             }
         } catch (e) {
             console.warn('Clipboard Indicator: cannot subscribe to screen lock:', e);
@@ -2160,7 +2185,7 @@ const ClipboardIndicator = GObject.registerClass({
                     (proxy, senderName, signalName, parameters) => {
                         const sleeping = parameters && parameters[0] === true;
                         if (sleeping) {
-                            this._autoLockVault();
+                            this._autoLockVault('sleep');
                         }
                     }
                 );
@@ -2189,8 +2214,14 @@ const ClipboardIndicator = GObject.registerClass({
         this._login1SignalId = null;
     }
 
-    _autoLockVault() {
+    _autoLockVault(cause) {
         if (!this.vaultManager || !this.vaultManager.isUnlocked()) {
+            return;
+        }
+        // In "after-sleep" mode a plain screen lock (Super+L / wallpaper) is
+        // not enough to require the master password again — only an actual
+        // suspend (sleep) re-locks the vault. Other modes lock on both.
+        if (VAULT_PASSWORD_REQUEST === 'after-sleep' && cause !== 'sleep') {
             return;
         }
         if (this.menu && this.menu.isOpen) {
@@ -2223,6 +2254,11 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _showHistoryMenu() {
+        // Leaving vault mode: reset the vault search filter when the option
+        // is enabled (VAULT_RESET_SEARCH_ON_CLOSE, default on).
+        if (this.passwordVaultMenuSection && VAULT_RESET_SEARCH_ON_CLOSE) {
+            this.passwordVaultMenuSection.resetSearch();
+        }
         this.isVaultMode = false;
         this.#showElements();
     }

@@ -302,6 +302,17 @@ class Settings {
             subtitle: _("When 'All' is selected, show nothing until you search (extra privacy)")
         });
 
+        this.field_vault_password_request = new Adw.ComboRow({
+            title: _("When to ask for the master password"),
+            subtitle: _("How often the password vault requests the master password"),
+            model: this.#createVaultPasswordRequestOptions()
+        });
+
+        this.field_vault_reset_search = new Adw.SwitchRow({
+            title: _("Reset vault search on close"),
+            subtitle: _("Clear the search filter in the password vault when the vault menu closes")
+        });
+
         this.ui =  new Adw.PreferencesGroup({ title: _('UI') });
         this.behavior = new Adw.PreferencesGroup({title: _('Behavior')});
         this.exclusion = new Adw.PreferencesGroup({ title: _('Exclusion') });
@@ -326,6 +337,8 @@ class Settings {
         this.password_vault.add(this.field_password_vault_path);
         this.password_vault.add(this.field_vault_pin_recent);
         this.password_vault.add(this.field_vault_hide_all_category);
+        this.password_vault.add(this.field_vault_password_request);
+        this.password_vault.add(this.field_vault_reset_search);
         this.password_vault.add(this.field_vault_copy_to_history);
 
         this.ui.add(this.field_preview_size);
@@ -421,6 +434,22 @@ class Settings {
         this.schema.bind(PrefsFields.VAULT_HIDE_ALL_CATEGORY, this.field_vault_hide_all_category, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_ENABLED, this.field_vault_enabled, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_COPY_TO_HISTORY, this.field_vault_copy_to_history, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_RESET_SEARCH_ON_CLOSE, this.field_vault_reset_search, 'active', Gio.SettingsBindFlags.DEFAULT);
+
+        // vault-password-request is a free-form string; map it to the combo index.
+        const vaultRequestModes = ['session', 'every-open', 'after-sleep'];
+        let vaultRequestCurrent = 'session';
+        try {
+            vaultRequestCurrent = this.schema.get_string(PrefsFields.VAULT_PASSWORD_REQUEST) || 'session';
+        } catch (e) {
+        }
+        this.field_vault_password_request.set_selected(Math.max(0, vaultRequestModes.indexOf(vaultRequestCurrent)));
+        this.field_vault_password_request.connect('notify::selected', () => {
+            const idx = this.field_vault_password_request.get_selected();
+            if (idx >= 0 && idx < vaultRequestModes.length) {
+                this.schema.set_string(PrefsFields.VAULT_PASSWORD_REQUEST, vaultRequestModes[idx]);
+            }
+        });
 
         this.field_clear_history_interval.set_sensitive(this.field_clear_history_on_interval.active);
         this.#fetchExludedAppsList();
@@ -432,6 +461,19 @@ class Settings {
             _("Clipboard Content"),
             _("Both"),
             _("Neither")
+        ];
+        let liststore = new Gtk.StringList();
+        for (let option of options) {
+            liststore.append(option)
+        }
+        return liststore;
+    }
+
+    #createVaultPasswordRequestOptions () {
+        let options = [
+            _("Once per session"),
+            _("Every time the vault is opened"),
+            _("After system sleep")
         ];
         let liststore = new Gtk.StringList();
         for (let option of options) {
