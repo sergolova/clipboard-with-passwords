@@ -173,10 +173,15 @@ export class PasswordVaultManager {
                     this.masterPassword = password;
                     this.unlocked = true;
                     // Re-sanitize on load so legacy or hand-edited items get
-                    // cleaned the next time the vault is saved.
+                    // cleaned the next time the vault is saved. Missing or
+                    // duplicated ids (a common outcome of hand-editing the
+                    // JSON: omitted id, or copy-pasted records) are made
+                    // unique here — every record survives, no card is lost.
                     this.data = {
                         version: parsedData.version || 1,
-                        items: (parsedData.items || []).map(it => this._sanitizeItem(it, it && it.id))
+                        items: this._normalizeIds(
+                            (parsedData.items || []).map(it => this._sanitizeItem(it))
+                        )
                     };
                     resolve(true);
                 } catch (e) {
@@ -220,7 +225,7 @@ export class PasswordVaultManager {
         // reappear in the stored JSON (e.g. after hand-editing a file).
         const jsonStr = JSON.stringify({
             version: this.data.version || 1,
-            items: (this.data.items || []).map(it => this._sanitizeItem(it, it && it.id))
+            items: (this.data.items || []).map(it => this._sanitizeItem(it))
         }, null, 2);
         const stream = tmpFile.replace(null, false, Gio.FileCreateFlags.NONE, null);
         stream.write_all(jsonStr, null);
@@ -366,9 +371,9 @@ export class PasswordVaultManager {
 
     // Build a minimal item object: empty/false fields are omitted entirely so
     // the stored JSON stays clean and easy to edit by hand or with other tools.
-    _sanitizeItem(data, id) {
+    _sanitizeItem(data) {
         const item = {
-            id: data.id || id || `service_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            id: data.id || this._generateId(),
             name: data.name || _('Untitled'),
             updatedAt: data.updatedAt || Date.now()
         };
@@ -396,8 +401,42 @@ export class PasswordVaultManager {
         return item;
     }
 
+    // Generate a fresh service id. `seen` (optional) contains the ids already
+    // taken, so the caller can enforce uniqueness on the first try; the
+    // `do/while` guard makes collisions impossible even without it.
+    _generateId(seen = new Set()) {
+        let id;
+        do {
+            id = `service_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+        } while (seen.has(id));
+        return id;
+    }
+
+    // Enforce the "unique id" invariant on data coming from outside the
+    // extension (hand-edited vault JSON). A record without an id is loaded
+    // as-is with a freshly generated id; a record that collides with an
+    // earlier one gets a fresh id too — both cards survive, and id-based
+    // operations (edit / delete / recent-service) keep pointing at exactly
+    // one record instead of silently affecting both.
+    _normalizeIds(items) {
+        const seen = new Set();
+        for (const item of items) {
+            if (!item.id || seen.has(item.id)) {
+                item.id = this._generateId(seen);
+            }
+            seen.add(item.id);
+        }
+        return items;
+    }
+
     async addService(itemData) {
         const item = this._sanitizeItem(itemData);
+        // The edit dialog never submits an id, so this is defensive: never
+        // let a freshly created record collide with an existing id.
+        const ids = new Set(this.data.items.map(i => i.id));
+        if (ids.has(item.id)) {
+            item.id = this._generateId(ids);
+        }
         this.data.items.unshift(item);
         await this.save();
         return item;
@@ -409,8 +448,7 @@ export class PasswordVaultManager {
 
         const existing = this.data.items[index];
         const updated = this._sanitizeItem(
-            { ...existing, ...updatedData, updatedAt: Date.now() },
-            existing.id
+            { ...existing, ...updatedData, updatedAt: Date.now() }
         );
 
         this.data.items[index] = updated;

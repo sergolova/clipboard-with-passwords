@@ -11,17 +11,18 @@ Forked from: [Tudmotu/gnome-shell-extension-clipboard-indicator](https://github.
 ### 🧠 Smart clipboard content recognition
 Clipboard entries are detected and visually distinguished by their content type, each with its own accent color in the menu:
 
-| Type | Example |
-| --- | --- |
-| **E-mail** | `user@example.com` |
-| **URL** | `https://github.com` |
-| **File list** | dragged/copied files show the file names |
-| **Multi-line text** | shows a preview of the non-empty lines |
-| **HTML/CSS colors** | predefined color names + hex codes (`#ff5500`) get a real color swatch preview |
-| **Images** | thumbnails with a preview button |
+| Type                | Example                                                                               |
+|---------------------|---------------------------------------------------------------------------------------|
+| **E-mail**          | `user@example.com`                                                                    |
+| **URL**             | `https://github.com`                                                                  |
+| **YouTube URL**     | `https://www.youtube.com/watch?v=dQw4w9WgXcQ` with video title                        |
+| **File list**       | dragged/copied files show the file names                                              |
+| **Multi-line text** | shows a preview of the non-empty lines with line count                                |
+| **HTML/CSS colors** | predefined color names + hex codes (`#ff5500`,`#f50`) get a real color swatch preview |
+| **Images**          | thumbnails with a preview button                                                      |
 
 <p align="center">
-  <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="400"/>
+  <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="450"/>
 </p>
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
@@ -245,12 +246,19 @@ value, `extraFields[].label` is omitted when empty, and
 hand — categories shown in the filter bar are derived automatically from the
 items, so there is no fixed `categories` list to maintain.
 
+**`id` is optional on input and safe to duplicate.** When the vault is opened,
+every record is loaded, and any record that has no `id` or shares one with an
+earlier record gets a fresh unique id (nothing is dropped, both cards stay).
+Saved files always contain a unique `id` per record, so id-based operations —
+editing, deleting, pinning the last used service — always affect exactly one
+card.
+
 Field reference:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `version` | int | Archive format version (`1`) |
-| `items[].id` | string | Unique service identifier |
+| `items[].id` | string | _Optional._ Unique service identifier. If omitted, the extension generates one; two records sharing the same id (e.g. after copy-paste editing) are split — the second gets a fresh id, both cards survive |
 | `items[].name` | string | Service name (shown as the card title) |
 | `items[].category` | string | _Optional._ Category this service belongs to (omitted when empty) |
 | `items[].description` | string | _Optional._ One-line description, searchable (omitted when empty) |
