@@ -1,6 +1,8 @@
 *.zip
 
-.idea/
-
 # IDE
 .idea/
+
+# Local-only tools (not shipped, per-machine)
+tools/local/
+*.local

@@ -1,172 +1,91 @@
-# AGENTS.md — Clipboard with Passwords
+# AGENTS.md — Universal guidance for working with GNOME Shell extensions
 
-Guidance for AI agents (and humans) working on this repository. Read this before
-changing code, and keep it up to date when you change the rules described here.
+This file is a **generic layer** for AI agents (and humans) working on **any**
+GNOME Shell extension. It contains the runtime model, debugging traps, and
+localization/schema gotchas that are common to every shell extension — read it
+before changing code, and keep it up to date when the rules described here
+change.
 
-## What this project is
+Repository-specific rules (branch, git identity, install path, extension
+UUID, key invariants of the extension itself, the file map, maintained
+locales) live in **`AGENTS.local.md`** in the same directory. Read **both**
+files; if they ever disagree, `AGENTS.local.md` wins for that repo.
 
-A fork of the GNOME Shell extension **Clipboard Indicator v71** («Clipboard
-with Passwords»). On top of the original clipboard history (+ keyboard
-navigation, URL metadata, etc.) it adds:
+## Runtime model — the part most agents get wrong at least once
 
-- an **encrypted password vault** (ZIP + `passwords.json` inside),
-- **localization** (**RU** and **UK** fully maintained, other locales inherited from the original),
-- a clean, **hand-editable `passwords.json`** format,
-- 6 new settings and 2 bug fixes (see «Key invariants»).
+- A GNOME Shell extension is a **GJS (mozjs) app** loaded into the running
+  shell — **no transpile step**, the `.js` files are the code. A JS syntax
+  check on every change:
+  ```bash
+  node --check extension.js && node --check *.js
+  ```
+- The extension is usually installed as **a symlink** from
+  `~/.local/share/gnome-shell/extensions/<uuid>` → the repo, so file edits are
+  **live on disk** — but **loading new JS / a recompiled schema / new
+  translations requires a shell restart** (`Alt+F2` → `r` on X11/Wayland
+  session, or `dbus-run-session gnome-shell --nested --wayland` for a nested
+  test session). Until the restart the **OLD code is running** — don't reason
+  from «I restarted».
+- Debug via `journalctl -f` (or `journalctl _PID=<pid>` — filter to the
+  session you are debugging, not a different nested one). GJS `log()` calls
+  and GLib criticals/warnings appear there.
 
-## Repository & workflow rules (do not break these)
+## The one shell quirk that bites every extension with editable texts
 
-- **Branch:** `clipboard-with-passwords`; **remote:** `git@github.com:sergolova/clipboard-with-passwords.git`
-- **Git identity (already configured locally):** `sergolova <sergolova666@tutanota.com>`
-- **The agent never creates commits.** The user commits the batch themselves.
-  Push is done by the user. Keep the working tree as a clean uncommitted batch.
-- **No `gh` CLI** — don't rely on it.
-- Do **not** touch the backup archive
-  `/mnt/data/SERA/Projects/Gnome/clipboard-indicator@tudmotu.com.tar.xz`.
-- UUID: `clipboard-with-passwords@sergolova`; extension is **installed as a
-  symlink** `~/.local/share/gnome-shell/extensions/clipboard-with-passwords@sergolova`
-  → this repo, so file edits are live — but a **shell restart is required** to
-  load new JS, a recompiled schema, and new translations (`Alt+F2` → `r`).
-- After changing `gschema.xml` the compiled schema is needed:
+If you build a dialog with several `St.Entry` / `St.PasswordEntry` fields,
+opening it with non-empty text in an **unfocused** field trips pairs of
+`clutter_input_focus_is_focused` criticals on the very first layout — one
+critical pair per unfocused non-empty field.
+
+- **Do not fix it with «set `editable=false`, then flip it back on the first
+  allocation».** The editable and non-editable allocation branches compute
+  different text offsets, so any state flip followed by another allocation
+  re-trips the assertions for **every** unfocused field.
+- **The robust pattern:** start every field **non-editable**; make it
+  editable only on first user interaction (click / key press / tab into the
+  field), when the input method is already attached and the assertions can't
+  fire. The field the dialog gives key focus to at open can stay editable from
+  the start — its input focus is attached before its first allocation.
+
+## Schema / settings — don't break legacy
+
+- **Never change the schema id** once shipped — users carry legacy settings;
+  extend with new keys, don't rename existing ones.
+- After editing `gschema.xml` compile the schema:
   ```bash
   glib-compile-schemas --strict --targetdir=schemas/ schemas
   ```
   Verify with:
   ```bash
-  gsettings --schemadir schemas list-keys org.gnome.shell.extensions.clipboard-indicator
+  gsettings --schemadir schemas list-keys <schema-id>
   ```
-- JS syntax check on every change:
-  ```bash
-  node --check extension.js && node --check *.js
-  ```
-
-## Key invariants (decisions that shaped the code)
-
-- **Schema id stays** `org.gnome.shell.extensions.clipboard-indicator`
-  (legacy settings compatibility). **gettext-domain** is
-  `clipboard-with-passwords`.
-- **Vault default path:** `~/.config/clipboard-indicator/passwords.zip`
-  (resolved via `resolveVaultPath()` in `passwordVault.js`).
-- **JSON format rules:**
-  - No default categories; the root **`categories` key is absent**.
-  - On save, **omit empty/false fields**: `category`, `description`, `login`,
-    `password`, `extraFields`, `extraFields[].label`, and
-    `extraFields[].isHidden=false`. `password` is kept **untrimmed**.
-  - `_sanitizeItem()` in `passwordVault.js` builds minimal items; name
-    fallback is `_('Untitled')`; it preserves `data.id` and `data.updatedAt`.
-    Items are re-sanitized on **load and save** (fixes legacy/hand-edited files).
-  - Categories are **derived dynamically** in `getCategories()`; there is no
-    `addCategory()`; the filter bar has no fixed category list.
-- **«All» pseudo-category** uses the internal sentinel
-  `ALL_CATEGORY = '__all__'` (exported from `passwordVault.js`), **not** the
-  translated word (`'Все'`/`'All'`) — a translated word would collide with a
-  real user category. Backward compatible, no migration.
-- **The added settings are booleans** (not enums), all defined in
-  `prefs.js` + `constants.js` + `gschema.xml`:
-  | Key | Default |
-  | --- | --- |
-  | `vault-enabled` | `true` |
-  | `vault-pin-recent` | `true` |
-  | `vault-hide-all-category` | `false` |
-  | `vault-copy-to-history` | `false` |
-  | `colorize-clipboard` | `true` |
-  | `fetch-youtube-titles` | `false` |
-  (Off by default: enabling it sends copied YouTube links to a third party — `https://www.youtube.com/oembed`.)
-- `VAULT_ENABLED` guards `openPasswordVault()` (early return); `_onSettingsChange`
-  drops back to the history view when the vault is disabled while open.
-  `VAULT_COPY_TO_HISTORY` makes vault copies go through the normal clipboard
-  watcher (no `ignoreNextClipboardChange`) so they land in the visible history —
-  intentionally insecure, default off, warning shown in prefs/README.
-- **No default keybindings** — `toggle-menu` and `toggle-password-vault` ship
-  as empty arrays (`[]` in `gschema.xml`) to comply with EGO review guidelines
-  (MUST NOT bind non-empty defaults that reveal clipboard/password data). Users
-  assign shortcuts in Settings → Shortcuts; `enable-keybindings` stays `true`.
-- **7z master password travels via stdin, never argv.** The vault spawns
-  `7z x -so` (no `-p`) and `7z a -tzip -p -y` (empty `-p`) and writes the
-  master password to the subprocess stdin (`communicate_utf8_async`), so it
-  never appears in `ps aux`/`journalctl`.
-- **Archive backend fallback:** `passwordVault.js` probes `7z` first and
-  falls back to `7za` (`resolveArchiveBinary()`, cached on success only).
-  `7zr` is **not** a candidate (it can't read/write ZIP — «Unsupported
-  archive type»); the `p7zip` executable is a gzip-style wrapper and is not
-  used either. The not-installed error text must list both supported
-  binaries (`7-Zip (7z or 7za) is not installed.`).
-- **Master password life cycle:**
-  - Asked only when opening the vault while it is **not unlocked**;
-    afterwards the vault stays unlocked in memory for the session.
-  - **Auto-lock** on screen lock and suspend (see `_setupAutoLock()` in
-    `extension.js`; subscribes to `org.gnome.ScreenSaver` `Locked` and
-    `org.freedesktop.login1` `PrepareForSleep`). Vault menu closes, a
-    notification is shown.
-  - If the **vault path in settings changes while unlocked**, the vault is
-    locked again and the password re-requested (no silent write to a new file).
-  - Unlock/save errors are user-facing: `passwordVault.js` throws `Error`
-    whose `message` is a translated string; the unlock dialog displays
-    `e.message`; save-time failures surface via `Main.notify`.
-- **If the zip is deleted mid-session:** while unlocked the data survives in
-  memory and the next save recreates the archive; while locked, unlock creates
-  a new empty vault — the previous `.bak` (`passwords.zip.bak`) can restore it.
-- **Hide-All privacy mode** also hides the counts on category buttons.
-- **Vault dialogs are tracked for `disable()`.** `MasterPasswordDialog` and
-  `ServiceEditDialog` are registered in `ClipboardIndicator._vaultDialogs`
-  (`_registerVaultDialog()`; `PasswordVaultMenuSection` gets a `dialogTracker`
-  callback for the service editor). `destroy()` iterates a **copy** of the
-  registry and `close()`s each dialog. Both dialog classes call
-  `super._init({ destroyOnClose: true })` so a normally-closed dialog destroys
-  itself instead of lingering hidden in `Main.uiGroup`. Any new modal dialog in
-  the extension must be registered the same way.
-
-## File map
-
-| File | Purpose |
-| --- | --- |
-| `extension.js` | Main indicator: clipboard tracking, menu, type styles (`_updateTypeStyle()`), YouTube oEmbed gate, vault wiring, auto-lock |
-| `theme.js` | Theme detection (`isDarkTheme()`), `themeClass()` (`ci-theme-dark`/`ci-theme-light`), `themeColors()` palette (DARK/LIGHT) — the single source for all text/swatch/card colors |
-| `stylesheet.css` | Scoped CSS rules incl. theme-variant overrides (`.ci-theme-light …`) and the visible pinned/history separator |
-| `passwordVault.js` | `PasswordVaultManager`, `ALL_CATEGORY`, `generatePassword()`, `resolveVaultPath()`, 7z I/O, sanitize, path/writability checks |
-| `passwordVaultMenu.js` | Vault UI: cards, filter bar, category buttons, service row callbacks, `_notifySaveError()` |
-| `passwordVaultDialog.js` | `MasterPasswordDialog`, `ServiceEditDialog`, paste-button helper |
-| `prefs.js` | Settings panel rows + bindings (incl. the 4 new booleans) |
-| `constants.js` | `PrefsFields` keys (incl. the 4 new ones) |
-| `registry.js` | Clipboard/selection listeners, URL metadata glue |
-| `urlMetadataManager.js` | URL title cache (incl. YouTube) |
-| `keyboard.js` | Global keybind handling helper |
-| `confirmDialog.js` | Confirm dialog helper |
-| `schemas/org.gnome.shell.extensions.clipboard-indicator.gschema.xml` | Settings schema |
-| `locale/<lang>/LC_MESSAGES/clipboard-with-passwords.{po,mo}` | Translations (RU and UK are fully maintained) |
-| `clipboard-with-passwords.pot` | Translation template |
-| `tools/mo_writer.py` | Pure-python po→mo compiler (see Localization) |
+- New settings are **booleans**, not enums (EGO reviews look at that);
+  security-sensitive defaults must be **off** (keybindings that reveal
+  clipboard/password data, third-party network fetches — see Localization for
+  the fetch gate).
 
 ## Localization — known environment gotchas (critical)
 
 - **GNU `msgfmt` on this machine serves stale output.** Always rebuild `.mo`
-  with the pure-python compiler:
-  ```bash
-  python3 tools/mo_writer.py locale/ru/LC_MESSAGES/clipboard-with-passwords.po \
-      locale/ru/LC_MESSAGES/clipboard-with-passwords.mo
-  ```
-  (The `Makefile` still uses `msgfmt`; prefer the python path for real edits.)
-- The `.mo` must keep its **header entry** (empty msgid with `charset=UTF-8`)
-  or GLib will not load the file — `mo_writer.py` handles this.
-- When adding translatable strings: update **both** `clipboard-with-passwords.pot`
-  and the maintained locale files (`locale/ru/...po`, `locale/uk/...po`)
-  together (source references like `#: passwordVault.js` go in both), then
-  rebuild both `.mo` files.
+  with the pure-python compiler in the repo (`tools/` — see AGENTS.local.md
+  for the exact path/command if maintained locales exist; the compiler is now a
+  **local-only tool outside version control**, so the exact path lives in the
+  local layer). The `.mo` must keep its
+  **header entry** (empty `msgid` with `charset=UTF-8`) or GLib will not load
+  the file.
+- When adding translatable strings: update **both** the `.pot` template (in
+  the repo root) **and** the maintained locale files together (source
+  references like `#: extension.js` go in both), then rebuild the `.mo` files.
 - **Verify** the result with python gettext (same-process reads are
   authoritative; GNU gettext binaries / cross-invocation reads can serve stale
   data):
   ```bash
   python3 - <<'EOF'
   import gettext
-  t = gettext.translation('clipboard-with-passwords',
-      localedir='locale', languages=['ru'])
+  t = gettext.translation('<domain>', localedir='locale', languages=['ru'])
   print(t.gettext('YOUR NEW STRING'))
   EOF
   ```
-- Deployed `ru.mo` and `uk.mo` each have 183 entries; the extension `locale/`
-  is live via the install symlink. The `uk.po` was fully re-translated
-  (regenerated from the pot); edit it in place and rebuild `uk.mo` with
-  `tools/mo_writer.py`.
 
 ## Testing / verification
 
@@ -175,5 +94,5 @@ navigation, URL metadata, etc.) it adds:
 - Live testing: restart the shell (`Alt+F2` → `r`). Until the restart new
   schema keys fall back to defaults via try/catch in the getters — don't
   mistake that for a regression.
-- AGENTS.md and README notes: the README documents the master-password life
-  cycle, deleted-archive behavior, and invalid-path/write-protection handling.
+- Keep AGENTS.md, AGENTS.local.md and the repo README in sync when you change
+  the rules described here.
