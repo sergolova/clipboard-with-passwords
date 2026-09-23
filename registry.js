@@ -305,7 +305,7 @@ export class ClipboardEntry {
 
     isURL () {
         if (!this.isText() || this.isURIList()) return false;
-        const text = this.getStringValue();
+        const text = this.getStringValue().trim().toLowerCase();
         return text.startsWith('http://') || text.startsWith('https://');
     }
 

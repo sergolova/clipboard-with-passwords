@@ -12,5 +12,9 @@
   ],
   "url": "https://github.com/sergolova/clipboard-with-passwords",
   "uuid": "clipboard-with-passwords@sergolova",
-  "version": 1
+  "version": 1,
+  "donations": {
+    "paypal": "",
+    "kofi": ""
+  }
 }
