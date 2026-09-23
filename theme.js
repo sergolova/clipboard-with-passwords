@@ -70,6 +70,7 @@ const DARK = {
     key: '#aaaaaa',            // field keys ("Login:", "Password:")
     accent: '#4af',            // recent-service name
     error: '#ff5555',
+    warn: '#f5c242',           // warning icon (hidden-field edge junk)
 
     // Cards & surfaces
     cardBg: 'rgba(255,255,255,0.04)',
@@ -95,6 +96,7 @@ const LIGHT = {
     key: '#555555',
     accent: '#2a7de1',
     error: '#c0392b',
+    warn: '#c78a00',           // warning icon (hidden-field edge junk)
 
     cardBg: 'rgba(0,0,0,0.05)',
     cardBorder: 'rgba(0,0,0,0.12)',

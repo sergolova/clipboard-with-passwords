@@ -220,7 +220,7 @@ export const ServiceEditDialog = GObject.registerClass(
             mainBox.add_child(new St.Label({ text: _('Service name:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let nameEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.nameEntry = new St.Entry({
-                text: serviceItem ? serviceItem.name : '',
+                text: serviceItem ? (serviceItem.name || '') : '',
                 hint_text: _('For example: GitHub')
             });
             this.nameEntry.set_x_expand(true);
@@ -248,7 +248,7 @@ export const ServiceEditDialog = GObject.registerClass(
             mainBox.add_child(new St.Label({ text: _('Login / Email:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let loginEntryBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.loginEntry = new St.Entry({
-                text: serviceItem ? serviceItem.login : '',
+                text: serviceItem ? (serviceItem.login || '') : '',
                 hint_text: 'user@example.com'
             });
             this.loginEntry.set_x_expand(true);
@@ -262,7 +262,7 @@ export const ServiceEditDialog = GObject.registerClass(
             mainBox.add_child(new St.Label({ text: _('Password:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
             let pwdBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.pwdEntry = new St.PasswordEntry({
-                text: serviceItem ? serviceItem.password : '',
+                text: serviceItem ? (serviceItem.password || '') : '',
                 hint_text: _('Password')
             });
             this.pwdEntry.set_x_expand(true);
@@ -314,7 +314,7 @@ export const ServiceEditDialog = GObject.registerClass(
                 this._addExtraRow('', '');
             });
 
-            this._setupTabNavigation([this.categoryEntry, this.nameEntry, this.loginEntry, this.pwdEntry]);
+            this._setupTabNavigation([this.categoryEntry, this.nameEntry, this.descEntry, this.loginEntry, this.pwdEntry]);
 
             let buttons = [
                 {
@@ -385,8 +385,22 @@ export const ServiceEditDialog = GObject.registerClass(
                 .forEach(entry => {
                     const ct = entry.clutter_text;
                     ct.editable = false;
-                    ct.connect('button-press-event', () => {
-                        ct.editable = true;
+                    // A non-editable ClutterText is skipped by pointer pick, so
+                    // the click lands on the St.Entry widget and a handler on
+                    // the text alone never fires (the field only becomes
+                    // clickable after something, e.g. Tab, flips it editable).
+                    // Connect on BOTH actors: the entry widget catches the
+                    // click while the text is non-editable, the text catches
+                    // it once editable (harmless duplicate then).
+                    [entry, ct].forEach(actor => {
+                        actor.connect('button-press-event', () => {
+                            // Enable AND grant key focus in the same
+                            // interaction. Runs before the default handler, so
+                            // cursor positioning at the click point still works
+                            // after the text has become editable.
+                            ct.editable = true;
+                            global.stage.set_key_focus(ct);
+                        });
                     });
                 });
             // DIAGNOSTIC (verification only, dropped at commit time): proves the
@@ -422,32 +436,36 @@ export const ServiceEditDialog = GObject.registerClass(
 
         _setupTabNavigation(entries) {
             entries.forEach((entry) => {
-                if (entry && entry.clutter_text) {
-                    entry.clutter_text.connect('key-press-event', (actor, event) => {
-                        // A keypress means the user is about to type here: make
-                        // the field editable right away (see _init). For real
-                        // Tab/Shift-Tab handling we also pre-enable the target.
-                        actor.editable = true;
-                        const symbol = event.get_key_symbol();
-                        const state = event.get_state();
+                if (!entry || !entry.clutter_text) return;
+                // Connect on the St.Entry itself, not just the clutter_text:
+                // key events bubble UP from the focused actor, and at open the
+                // key focus sits on the St.Entry widget (setInitialKeyFocus),
+                // so a handler on the text child never fires. Connecting on the
+                // entry receives keys whether focus is on the widget or its text.
+                entry.connect('key-press-event', (actor, event) => {
+                    // A keypress means the user is about to type here: make
+                    // the field editable right away (see _init). For real
+                    // Tab/Shift-Tab handling we also pre-enable the target.
+                    entry.clutter_text.editable = true;
+                    const symbol = event.get_key_symbol();
+                    const state = event.get_state();
 
-                        if (symbol === Clutter.KEY_Tab || symbol === Clutter.KEY_ISO_Left_Tab) {
-                            const isShift = (state & Clutter.ModifierType.SHIFT_MASK) !== 0 || symbol === Clutter.KEY_ISO_Left_Tab;
-                            const allEntries = this._getTabOrderEntries();
-                            const curIdx = allEntries.findIndex(e => e && (e === entry || e.clutter_text === actor));
-                            if (curIdx !== -1 && allEntries.length > 0) {
-                                const nextIdx = isShift ? (curIdx - 1 + allEntries.length) % allEntries.length : (curIdx + 1) % allEntries.length;
-                                const nextEntry = allEntries[nextIdx];
-                                if (nextEntry && nextEntry.clutter_text) {
-                                    nextEntry.clutter_text.editable = true;
-                                    global.stage.set_key_focus(nextEntry.clutter_text);
-                                    return Clutter.EVENT_STOP;
-                                }
+                    if (symbol === Clutter.KEY_Tab || symbol === Clutter.KEY_ISO_Left_Tab) {
+                        const isShift = (state & Clutter.ModifierType.SHIFT_MASK) !== 0 || symbol === Clutter.KEY_ISO_Left_Tab;
+                        const allEntries = this._getTabOrderEntries();
+                        const curIdx = allEntries.findIndex(e => e && (e === entry || e.clutter_text === actor));
+                        if (curIdx !== -1 && allEntries.length > 0) {
+                            const nextIdx = isShift ? (curIdx - 1 + allEntries.length) % allEntries.length : (curIdx + 1) % allEntries.length;
+                            const nextEntry = allEntries[nextIdx];
+                            if (nextEntry && nextEntry.clutter_text) {
+                                nextEntry.clutter_text.editable = true;
+                                global.stage.set_key_focus(nextEntry.clutter_text);
+                                return Clutter.EVENT_STOP;
                             }
                         }
-                        return Clutter.EVENT_PROPAGATE;
-                    });
-                }
+                    }
+                    return Clutter.EVENT_PROPAGATE;
+                });
             });
         }
 

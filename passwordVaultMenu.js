@@ -9,6 +9,12 @@ import { PrefsFields } from './constants.js';
 import { ALL_CATEGORY } from './passwordVault.js';
 import { themeColors } from './theme.js';
 
+// A hidden (password / isHidden) field value that starts or ends with
+// whitespace (space, tab, line breaks) or a non-printable character
+// (control chars, zero-width space, BOM, …) is almost always a typo the user
+// cannot see behind the dots — flag it with a warning icon.
+const INVISIBLE_EDGE_RE = /^[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]|[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]$/;
+
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null, dialogTracker = null) {
         super();
@@ -171,7 +177,9 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         let container = new St.BoxLayout({
             vertical: true,
             style_class: 'password-vault-menu-container',
-            style: 'spacing: 8px; padding: 8px; min-width: 380px;'
+            // max-width caps the whole menu: without it one very long field
+            // value stretches every card and the popup becomes absurdly wide.
+            style: 'spacing: 8px; padding: 8px; min-width: 380px; max-width: 480px;'
         });
 
         let itemContainer = new PopupMenu.PopupBaseMenuItem({
@@ -528,9 +536,27 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             x_align: Clutter.ActorAlign.START
         });
         valueWidget.set_x_expand(true);
+        // Never let one long stored value widen the card/menu: truncate with
+        // an ellipsis inside the row's allocated width (full value is still
+        // copied on click and visible in the edit dialog).
+        valueWidget.clutter_text.ellipsize = Pango.EllipsizeMode.END;
 
         row.add_child(labelWidget);
         row.add_child(valueWidget);
+
+        // Warn about leading/trailing junk in the stored value: invisible
+        // whitespace or non-printable chars at the edges are a common typo
+        // (Ctrl+V artifact, stray space) that stays hidden behind the dots.
+        if (isPassword && INVISIBLE_EDGE_RE.test(valueStr)) {
+            let warnIcon = new St.Icon({
+                icon_name: 'dialog-warning-symbolic',
+                icon_size: 14,
+                style: `color: ${themeColors().warn};`,
+                y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: _('Warning: value has hidden leading or trailing characters')
+            });
+            row.add_child(warnIcon);
+        }
 
         if (isPassword) {
             let toggleBtn = new St.Button({
