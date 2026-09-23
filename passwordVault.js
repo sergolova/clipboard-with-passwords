@@ -381,8 +381,11 @@ export class PasswordVaultManager {
                 .map(f => {
                     const e = {};
                     if (f.label && f.label.trim()) e.label = f.label.trim();
+                    // Keep the stored value verbatim (no trim): leading/trailing
+                    // invisible junk must survive so the warning icon in the card
+                    // can actually flag it. Only the label is trimmed.
                     if (f.value !== undefined && f.value !== null && String(f.value).trim() !== '') {
-                        e.value = String(f.value).trim();
+                        e.value = String(f.value);
                     }
                     if (f.isHidden) e.isHidden = true;
                     return e;

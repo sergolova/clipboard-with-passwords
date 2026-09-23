@@ -1293,13 +1293,13 @@ const ClipboardIndicator = GObject.registerClass({
         // color entries are not protectable)
         if (entry.isText() && !entry.isURIList() && !entry.isColor()) {
             const pwIcon = new St.Icon({
-                icon_name: 'channel-insecure-symbolic',
+                icon_name: entry.isPassword() ? 'security-high-symbolic' : 'channel-insecure-symbolic',
                 style_class: 'system-status-icon'
             });
             menuItem.passwordBtn = new St.Button({
                 style_class: 'ci-action-btn',
                 can_focus: true,
-                accessible_name: _('Mark as password'),
+                accessible_name: entry.isPassword() ? _('Unmark as password') : _('Mark as password'),
                 child: pwIcon,
                 visible: entry.isFavorite(),
                 x_expand: false,
