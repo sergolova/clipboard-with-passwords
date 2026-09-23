@@ -69,6 +69,10 @@
       <default>false</default>
       <summary>Strip text</summary>
     </key>
+    <key name="strip-line-breaks" type="b">
+      <default>false</default>
+      <summary>Strip line breaks from text</summary>
+    </key>
     <key name="keep-selected-on-clear" type="b">
       <default>false</default>
       <summary>Keep selected on clear</summary>

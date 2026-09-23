@@ -49,6 +49,7 @@ let PASTE_ON_SELECT = false;
 let DISABLE_DOWN_ARROW = false;
 let BLINK_ICON_ON_COPY = false;
 let STRIP_TEXT = false;
+let STRIP_LINE_BREAKS = false;
 let KEEP_SELECTED_ON_CLEAR = false;
 let PASTE_BUTTON = true;
 let PINNED_ON_BOTTOM = false;
@@ -73,6 +74,24 @@ let COLORIZE_CLIPBOARD = true;
 let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
 let VAULT_COPY_TO_HISTORY = false;
+
+/*
+ * Strip leading/trailing whitespace from a text value according to the
+ * STRIP_TEXT / STRIP_LINE_BREAKS settings:
+ * - neither:  no change
+ * - STRIP_TEXT only: remove leading/trailing spaces and tabs (keeps line breaks)
+ * - STRIP_LINE_BREAKS only: remove leading/trailing line breaks (keeps spaces)
+ * - both: full trim of any alternating mix (equivalent to String.trim())
+ */
+function stripClipboardEdges(text) {
+    if (STRIP_TEXT && STRIP_LINE_BREAKS)
+        return text.replace(/^\s+|\s+$/g, '');
+    if (STRIP_TEXT)
+        return text.replace(/^[ \t]+|[ \t]+$/g, '');
+    if (STRIP_LINE_BREAKS)
+        return text.replace(/^[\r\n]+|[\r\n]+$/g, '');
+    return text;
+}
 
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
@@ -893,7 +912,7 @@ const ClipboardIndicator = GObject.registerClass({
                         menuItem._twoLineBox = null;
                     }
                     menuItem.label.show();
-                    menuItem.label.set_text(this._truncate(rawText, MAX_ENTRY_LENGTH));
+                    menuItem.label.set_text(this._truncate(urlText, MAX_ENTRY_LENGTH));
 
                     if (!cachedMeta || (!cachedMeta.title && !cachedMeta.failed)) {
                         this.urlMetadataManager.fetchMetadataAsync(urlText).then(meta => {
@@ -913,7 +932,9 @@ const ClipboardIndicator = GObject.registerClass({
                     menuItem._twoLineBox = null;
                 }
                 menuItem.label.show();
-                menuItem.label.set_text(this._truncate(rawText, MAX_ENTRY_LENGTH));
+                menuItem.label.set_text(this._truncate(
+                    (entry.isURL() || entry.isEmail()) ? urlText : rawText,
+                    MAX_ENTRY_LENGTH));
             }
         } else if (entry.isImage()) {
             this.registry.getEntryAsImage(entry).then(img => {
@@ -1950,6 +1971,7 @@ const ClipboardIndicator = GObject.registerClass({
         DISABLE_DOWN_ARROW = settings.get_boolean(PrefsFields.DISABLE_DOWN_ARROW);
         BLINK_ICON_ON_COPY = settings.get_boolean(PrefsFields.BLINK_ICON_ON_COPY);
         STRIP_TEXT = settings.get_boolean(PrefsFields.STRIP_TEXT);
+        STRIP_LINE_BREAKS = settings.get_boolean(PrefsFields.STRIP_LINE_BREAKS);
         KEEP_SELECTED_ON_CLEAR = settings.get_boolean(PrefsFields.KEEP_SELECTED_ON_CLEAR);
         PASTE_BUTTON = settings.get_boolean(PrefsFields.PASTE_BUTTON);
         PINNED_ON_BOTTOM = settings.get_boolean(PrefsFields.PINNED_ON_BOTTOM);
@@ -2755,6 +2777,23 @@ const ClipboardIndicator = GObject.registerClass({
 
                         try {
                             const entry = new ClipboardEntry(type, bytes.get_data(), false);
+
+                            // Apply STRIP_TEXT / STRIP_LINE_BREAKS at capture time: the
+                            // stripped value is what gets saved to the registry and what
+                            // gets inserted back into the clipboard.
+                            if ((STRIP_TEXT || STRIP_LINE_BREAKS) && entry.isText() &&
+                                !entry.isURIList()) {
+                                const stripped = stripClipboardEdges(entry.getStringValue());
+                                if (stripped !== '') {
+                                    entry.setText(stripped);
+                                } else {
+                                    // Nothing left after stripping — don't store an empty
+                                    // entry; fall through to check other clipboard types.
+                                    resolve(null);
+                                    return;
+                                }
+                            }
+
                             if (CACHE_IMAGES && entry.isImage()) {
                                 this.registry.writeEntryFile(entry);
                             }

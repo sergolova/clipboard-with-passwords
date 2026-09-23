@@ -324,7 +324,7 @@ export class ClipboardEntry {
 
     isMultiline () {
         if (!this.isText() || this.isURIList()) return false;
-        return this.getStringValue().includes('\n');
+        return this.getStringValue().trim().includes('\n');
     }
 
     isColor () {

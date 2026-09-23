@@ -123,8 +123,13 @@ class Settings {
         });
 
         this.field_strip_text = new Adw.SwitchRow({
-            title: _("Remove whitespace around text"),
-            subtitle: _("Strip leading and trailing whitespace from text entries on copy")
+            title: _("Remove spaces around text"),
+            subtitle: _("Strip leading and trailing spaces from text entries on copy")
+        });
+
+        this.field_strip_line_breaks = new Adw.SwitchRow({
+            title: _("Remove line breaks around text"),
+            subtitle: _("Strip leading and trailing line breaks from text entries on copy")
         });
 
         this.field_move_item_first = new Adw.SwitchRow({
@@ -335,6 +340,7 @@ class Settings {
         this.ui.add(this.field_fetch_youtube_titles);
 
         this.behavior.add(this.field_strip_text);
+        this.behavior.add(this.field_strip_line_breaks);
         this.behavior.add(this.field_move_item_first);
         this.behavior.add(this.field_keep_selected_on_clear);
         this.behavior.add(this.field_open_at_cursor);
@@ -388,6 +394,7 @@ class Settings {
         this.schema.bind(PrefsFields.BLINK_ICON_ON_COPY, this.field_blink_icon_on_copy, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.TOPBAR_PREVIEW_SIZE, this.field_topbar_preview_size, 'value', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.STRIP_TEXT, this.field_strip_text, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.STRIP_LINE_BREAKS, this.field_strip_line_breaks, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.PASTE_BUTTON, this.field_paste_button, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.PINNED_ON_BOTTOM, this.field_pinned_on_bottom, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.SHOW_SEARCH_BAR, this.field_show_search_bar, 'active', Gio.SettingsBindFlags.DEFAULT);

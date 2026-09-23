@@ -16,6 +16,7 @@ export const PrefsFields = {
     DISABLE_DOWN_ARROW              : 'disable-down-arrow',
     BLINK_ICON_ON_COPY              : 'blink-icon-on-copy',
     STRIP_TEXT                      : 'strip-text',
+    STRIP_LINE_BREAKS               : 'strip-line-breaks',
     KEEP_SELECTED_ON_CLEAR          : 'keep-selected-on-clear',
     PASTE_BUTTON                    : 'paste-button',
     PINNED_ON_BOTTOM                : 'pinned-on-bottom',
