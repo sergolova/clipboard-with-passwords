@@ -274,7 +274,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.itemsScrollView = new St.ScrollView({
             style: 'max-height: 380px; margin-top: 6px;',
             hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            // Overlay scrollbars (same as the clipboard menu and the service
+            // edit dialog): a non-overlay vscrollbar glitches on scroll.
+            overlay_scrollbars: true
         });
 
         this.itemsBox = new St.BoxLayout({ vertical: true, style: 'spacing: 8px;' });

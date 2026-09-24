@@ -150,9 +150,19 @@ export const ServiceEditDialog = GObject.registerClass(
                 style: 'max-height: 600px; width: 470px;',
                 hscrollbar_policy: St.PolicyType.NEVER,
                 vscrollbar_policy: St.PolicyType.AUTOMATIC,
+                overlay_scrollbars: true,
                 clip_to_allocation: true
             });
             this.contentLayout.add_child(scrollView);
+
+            // During (smooth) scrolling St lets the moved child damage only
+            // its own old/new bounds; a ~10px strip at the content's right
+            // edge can stay OUT of the damage region, so the compositor
+            // keeps showing the PRE-scroll frame there — the "frozen strip"
+            // artifact (visible live, absent from captures; a click on the
+            // widget repaints it). Force the whole viewport to repaint on
+            // every scroll step so the strip can never lag behind.
+            scrollView.vadjustment.connect('notify::value', () => scrollView.queue_redraw());
 
             let mainBox = new St.BoxLayout({
                 vertical: true,
