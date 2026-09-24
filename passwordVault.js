@@ -297,7 +297,11 @@ export class PasswordVaultManager {
                 // `-p` with no value makes 7-Zip read the password from
                 // stdin, so the master password never appears in argv /
                 // the process list.
-                argv: [archiveBinary, 'a', '-tzip', '-p', '-y', this.zipPath, dataJsonPath],
+                // `-mem=AES256` (WinZip AES, PBKDF2-HMAC-SHA1) instead of the
+                // default ZipCrypto for `-tzip`, which is attackable via
+                // known-plaintext. The archive stays a standard encrypted
+                // ZIP, just encrypted with AES-256.
+                argv: [archiveBinary, 'a', '-tzip', '-mem=AES256', '-p', '-y', this.zipPath, dataJsonPath],
                 flags: Gio.SubprocessFlags.STDIN_PIPE |
                        Gio.SubprocessFlags.STDOUT_PIPE |
                        Gio.SubprocessFlags.STDERR_PIPE

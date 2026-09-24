@@ -225,6 +225,13 @@ and the `.bak` copy next to it contains it too.
 > hands it to `7z` through the process's **stdin** (and the `-p` switch without a
 > value), so it never shows up in the process list (`ps aux` / `journalctl`).
 
+> 🔒 **Archives are encrypted with AES-256** (`-mem=AES256`, WinZip AES,
+> PBKDF2-HMAC-SHA1) — not the legacy ZipCrypto algorithm. Archives created by
+> older versions of the extension (ZipCrypto) continue to open normally and
+> are re-encrypted to AES-256 at the next save. Note: classic Info-ZIP
+> `unzip` cannot read AES-encrypted ZIPs — use `7z`/`7za` (as documented
+> below), WinRAR or Explorer.
+
 Working with the archive manually:
 
 ```bash
@@ -237,8 +244,8 @@ Working with the archive manually:
 # extract the JSON to stdout and save it
 7z x -so ~/.config/clipboard-with-passwords/storage.zip > data.json
 
-# write the file back into the archive (encrypted)
-7z a -tzip -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.zip data.json
+# write the file back into the archive (AES-256 encrypted)
+7z a -tzip -mem=AES256 -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.zip data.json
 ```
 
 Each save also keeps a `.bak` copy of the previous archive next to it.
