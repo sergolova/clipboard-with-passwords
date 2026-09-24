@@ -4,8 +4,7 @@ import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import { PrefsFields } from './constants.js';
-import { DEFAULT_VAULT_PATH } from './passwordVault.js';
+import { PrefsFields, DEFAULT_VAULT_PATH } from './constants.js';
 
 export default class ClipboardIndicatorPreferences extends ExtensionPreferences {
     fillPreferencesWindow (window) {

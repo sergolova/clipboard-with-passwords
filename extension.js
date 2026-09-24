@@ -17,12 +17,12 @@ import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/ex
 import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
-import {PrefsFields} from './constants.js';
+import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
-import {PasswordVaultManager, DEFAULT_VAULT_PATH} from './passwordVault.js';
+import {PasswordVaultManager} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
 import {themeClass, themeColors} from './theme.js';
@@ -1330,6 +1330,17 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _addEntry(entry, autoSelect, autoSetClip) {
+        // Skip image entries that have nothing to deliver: cache file deleted
+        // (user/cleanup) AND payload not in memory — they would render as a
+        // dead white strip and cannot be pasted. Live entries (file complete,
+        // or payload in memory — the file is rewritten on demand) are never
+        // affected, so this cannot race with an in-flight async cache write:
+        // the capture path awaits the write before exposing the entry.
+        if (entry.isImage() && !this.registry.entryHasUsableCache(entry)) {
+            logWarn('Clipboard Indicator: skipping image entry with no cache file and no in-memory payload');
+            return;
+        }
+
         let menuItem = new PopupMenu.PopupMenuItem('');
 
         menuItem.menu = this.menu;

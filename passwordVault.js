@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import { DEFAULT_VAULT_PATH } from './constants.js';
 import { logWarn } from './logging.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
@@ -42,13 +43,9 @@ export function generatePassword(length = 16, options = {}) {
     return res.split('').sort(() => Math.random() - 0.5).join('');
 }
 
-// Default location of the encrypted vault archive. The directory and file
-// names were chosen so that nothing in the extension's defaults, docs or
-// on-disk formats advertises that it stores passwords: "storage.zip" for the
-// archive and VAULT_MEMBER_NAME ("data.json") for the JSON payload inside it.
-export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zip';
-
-// Member name of the JSON payload inside the encrypted archive.
+// Default location of the encrypted vault archive (shared with the schema
+// default): "storage.zip" for the archive, "data.json" for the JSON payload
+// inside it — see DEFAULT_VAULT_PATH in constants.js.
 const VAULT_MEMBER_NAME = 'data.json';
 
 export function resolveVaultPath(pathStr) {

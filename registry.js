@@ -141,6 +141,12 @@ export class Registry {
             // to the menu, so the file is normally complete here; this check also
             // rewrites a leftover from a failed write (empty file).
             if (this.#entryFileComplete(entry) === false) {
+                // Only an entry whose payload is in memory can be restored on
+                // the fly — a lazily-restored entry with a missing file has
+                // nothing to paste and nothing to rewrite (it is filtered out
+                // of the menu by entryHasUsableCache()).
+                if (!entry.hasPayload())
+                    return null;
                 await this.writeEntryFile(entry);
             }
 
@@ -156,6 +162,19 @@ export class Registry {
             logError('Clipboard Indicator: failed to load image texture', e);
             return null;
         }
+    }
+
+    // An image item is only worth showing when it can actually be delivered:
+    // the cache file is complete (lazily-restored entries), or the payload is
+    // already in memory (freshly copied entries — getEntryAsTexture() rewrites
+    // the cache file on demand). An entry with neither would render as a dead
+    // white strip and has nothing to paste.
+    entryHasUsableCache (entry) {
+        if (!entry.isImage())
+            return true;
+        if (entry.hasPayload())
+            return true;
+        return this.#entryFileComplete(entry);
     }
 
     getEntryFilename (entry) {
@@ -567,6 +586,15 @@ export class ClipboardEntry {
             throw new Error(`clipboard image cache file missing: ${this.#storedFilename}`);
         this.#bytes = contents;
         return GLib.Bytes.new(contents);
+    }
+
+    // True when the payload is already in memory (freshly copied entries, or
+    // lazily-restored entries after their first asBytesAsync()). Lets the menu
+    // builder tell a live entry (cache file deleted mid-session, but the
+    // payload is here and the file can be rewritten on demand) from a dead one
+    // (no file and no payload — nothing to paste).
+    hasPayload () {
+        return !!this.#bytes;
     }
 
     asBytes () {

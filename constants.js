@@ -57,3 +57,8 @@ export const PrefsFields = {
     FETCH_YOUTUBE_TITLES            : 'cwp-fetch-youtube-titles',
     BINDING_TOGGLE_PASSWORD_VAULT   : 'cwp-toggle-password-vault',
 };
+
+// Default location of the encrypted vault archive. Chosen so that nothing in
+// the extension's defaults, docs or on-disk formats advertises that it stores
+// passwords; the JSON payload inside the archive is named "data.json".
+export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zip';
