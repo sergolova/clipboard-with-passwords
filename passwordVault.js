@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
 // translated word (e.g. 'Все'/'All'): such a word could collide with a real

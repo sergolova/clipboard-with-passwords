@@ -3,6 +3,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { generatePassword } from './passwordVault.js';
 import { themeColors } from './theme.js';
 

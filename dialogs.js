@@ -3,6 +3,7 @@ import Cogl from 'gi://Cogl';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {themeClass, themeColors} from './theme.js';
 
 /**

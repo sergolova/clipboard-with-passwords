@@ -4,6 +4,7 @@ import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { ServiceEditDialog } from './passwordVaultDialog.js';
 import { PrefsFields } from './constants.js';
 import { ALL_CATEGORY } from './passwordVault.js';
