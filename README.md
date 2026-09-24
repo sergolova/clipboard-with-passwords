@@ -49,9 +49,9 @@ Image items get a **proportional thumbnail** — non-square images are no longer
 Pinned (favorite) text items can be **protected** with a single click (`Mark as protected`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.
 
 ### 🔐 Built-in password manager
-- Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-indicator/passwords.zip`).
+- Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-with-passwords/storage.zip`).
 - The archive is a **standard encrypted ZIP** — it can be read and edited outside the extension (see [The vault archive](#-the-vault-archive)).
-- The archive contains a single `passwords.json` file, which can also be edited manually.
+- The archive contains a single `data.json` file, which can also be edited manually.
 - Access is protected by a **master password**.
 
 <p align="center">
@@ -208,9 +208,9 @@ extension in **GNOME Extensions** (or with
 
 ## 🔐 The vault archive
 
-The vault is a standard encrypted ZIP archive that contains a single `passwords.json` file.
+The vault is a standard encrypted ZIP archive that contains a single `data.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
-Keep the archive file (e.g. `passwords.zip`) in a **protected location** — do not put it in
+Keep the archive file (e.g. `storage.zip`) in a **protected location** — do not put it in
 a world-readable directory. Anyone with read access to the file can attempt to crack it,
 and the `.bak` copy next to it contains it too.
 
@@ -222,21 +222,21 @@ Working with the archive manually:
 
 ```bash
 # list the contents
-7z l ~/.config/clipboard-indicator/passwords.zip
+7z l ~/.config/clipboard-with-passwords/storage.zip
 
 # extract the JSON to the current directory (you will be prompted for the master password)
-7z x ~/.config/clipboard-indicator/passwords.zip
+7z x ~/.config/clipboard-with-passwords/storage.zip
 
 # extract the JSON to stdout and save it
-7z x -so ~/.config/clipboard-indicator/passwords.zip > passwords.json
+7z x -so ~/.config/clipboard-with-passwords/storage.zip > data.json
 
 # write the file back into the archive (encrypted)
-7z a -tzip -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-indicator/passwords.zip passwords.json
+7z a -tzip -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.zip data.json
 ```
 
 Each save also keeps a `.bak` copy of the previous archive next to it.
 
-### Example `passwords.json`
+### Example `data.json`
 
 ```json
 {
@@ -321,12 +321,12 @@ session.
   data (a fresh `.bak` is made from the previous state if it still existed).
 - If the vault is **locked** when the file disappears (e.g. after auto-lock on
   suspend): unlocking creates a **new empty** vault for that master password.
-  Your previous data is not destroyed though — the `passwords.zip.bak` from the
+  Your previous data is not destroyed though — the `storage.zip.bak` from the
   last save (if any) is still on disk, and can be restored manually:
 
 ```bash
 # recover the previous archive from the backup copy
-cp ~/.config/clipboard-indicator/passwords.zip.bak ~/.config/clipboard-indicator/passwords.zip
+cp ~/.config/clipboard-with-passwords/storage.zip.bak ~/.config/clipboard-with-passwords/storage.zip
 ```
 
 **Invalid path or a write-protected file.** If the «Password vault file path»
@@ -348,7 +348,7 @@ the original extension might add later):
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cwp-password-vault-path` | string | `~/.config/clipboard-indicator/passwords.zip` | Path to the encrypted vault ZIP archive |
+| `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP archive |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
 | `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |

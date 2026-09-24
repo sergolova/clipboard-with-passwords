@@ -172,7 +172,7 @@
     </key>
 
     <key name="cwp-password-vault-path" type="s">
-      <default>'~/.config/clipboard-indicator/passwords.zip'</default>
+      <default>'~/.config/clipboard-with-passwords/storage.zip'</default>
       <summary>Path to encrypted password vault ZIP archive</summary>
     </key>
     <key name="cwp-vault-enabled" type="b">

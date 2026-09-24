@@ -22,7 +22,7 @@ import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
-import {PasswordVaultManager} from './passwordVault.js';
+import {PasswordVaultManager, DEFAULT_VAULT_PATH} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
 import {themeClass, themeColors} from './theme.js';
@@ -228,7 +228,7 @@ const ClipboardIndicator = GObject.registerClass({
             isPrivateMode: () => PRIVATEMODE,
         });
 
-        let vaultPath = '~/.config/clipboard-indicator/passwords.zip';
+        let vaultPath = DEFAULT_VAULT_PATH;
         try {
             vaultPath = extension.settings.get_string(PrefsFields.PASSWORD_VAULT_PATH) || vaultPath;
         } catch (e) {

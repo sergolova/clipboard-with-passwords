@@ -5,6 +5,7 @@ import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import { PrefsFields } from './constants.js';
+import { DEFAULT_VAULT_PATH } from './passwordVault.js';
 
 export default class ClipboardIndicatorPreferences extends ExtensionPreferences {
     fillPreferencesWindow (window) {
@@ -291,7 +292,7 @@ class Settings {
 
         this.field_password_vault_path = new Adw.EntryRow({
             title: _("Password Vault File Path"),
-            text: this.schema.get_string(PrefsFields.PASSWORD_VAULT_PATH) || '~/.config/clipboard-indicator/passwords.zip'
+            text: this.schema.get_string(PrefsFields.PASSWORD_VAULT_PATH) || DEFAULT_VAULT_PATH
         });
         this.field_password_vault_path.connect('changed', (row) => {
             this.schema.set_string(PrefsFields.PASSWORD_VAULT_PATH, row.get_text());

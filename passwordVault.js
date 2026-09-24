@@ -42,9 +42,18 @@ export function generatePassword(length = 16, options = {}) {
     return res.split('').sort(() => Math.random() - 0.5).join('');
 }
 
+// Default location of the encrypted vault archive. The directory and file
+// names were chosen so that nothing in the extension's defaults, docs or
+// on-disk formats advertises that it stores passwords: "storage.zip" for the
+// archive and VAULT_MEMBER_NAME ("data.json") for the JSON payload inside it.
+export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zip';
+
+// Member name of the JSON payload inside the encrypted archive.
+const VAULT_MEMBER_NAME = 'data.json';
+
 export function resolveVaultPath(pathStr) {
     if (!pathStr) {
-        pathStr = '~/.config/clipboard-indicator/passwords.zip';
+        pathStr = DEFAULT_VAULT_PATH;
     }
     if (pathStr.startsWith('~')) {
         pathStr = GLib.get_home_dir() + pathStr.slice(1);
@@ -160,7 +169,11 @@ export class PasswordVaultManager {
                     const [, stdout, stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
                     if (status !== 0) {
-                        reject(new Error(_('Wrong password or corrupted vault archive.') + '\n' + (stderr || '').trim()));
+                        // Raw 7-Zip stderr is only logged for debugging: it can
+                        // leak internal archive member names into the UI, which
+                        // the user must never see.
+                        if (stderr) logWarn('7z unlock stderr:', stderr.trim());
+                        reject(new Error(_('Wrong password or corrupted vault archive.')));
                         return;
                     }
 
@@ -237,9 +250,9 @@ export class PasswordVaultManager {
         const tmpSubDirFile = Gio.File.new_for_path(tmpSubDir);
         tmpSubDirFile.make_directory_with_parents(null);
 
-        const passwordsJsonPath = GLib.build_filenamev([tmpSubDir, 'passwords.json']);
-        const passwordsJsonFile = Gio.File.new_for_path(passwordsJsonPath);
-        tmpFile.move(passwordsJsonFile, Gio.FileCopyFlags.OVERWRITE, null, null);
+        const dataJsonPath = GLib.build_filenamev([tmpSubDir, VAULT_MEMBER_NAME]);
+        const dataJsonFile = Gio.File.new_for_path(dataJsonPath);
+        tmpFile.move(dataJsonFile, Gio.FileCopyFlags.OVERWRITE, null, null);
 
         if (zipFile.query_exists(null)) {
             try {
@@ -260,7 +273,7 @@ export class PasswordVaultManager {
                 // `-p` with no value makes 7-Zip read the password from
                 // stdin, so the master password never appears in argv /
                 // the process list.
-                argv: [archiveBinary, 'a', '-tzip', '-p', '-y', this.zipPath, passwordsJsonPath],
+                argv: [archiveBinary, 'a', '-tzip', '-p', '-y', this.zipPath, dataJsonPath],
                 flags: Gio.SubprocessFlags.STDIN_PIPE |
                        Gio.SubprocessFlags.STDOUT_PIPE |
                        Gio.SubprocessFlags.STDERR_PIPE
@@ -273,7 +286,7 @@ export class PasswordVaultManager {
         return new Promise((resolve, reject) => {
             proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc, res) => {
                 try {
-                    passwordsJsonFile.delete(null);
+                    dataJsonFile.delete(null);
                     tmpSubDirFile.delete(null);
                 } catch (e) {
                 }
@@ -282,7 +295,10 @@ export class PasswordVaultManager {
                     const [, , stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
                     if (status !== 0) {
-                        reject(new Error(_('Failed to update the password vault archive.') + '\n' + (stderr || '').trim()));
+                        // Same as unlock(): raw stderr goes to the (gated) log
+                        // only, never into a user-facing message.
+                        if (stderr) logWarn('7z save stderr:', stderr.trim());
+                        reject(new Error(_('Failed to update the password vault archive.')));
                         return;
                     }
                     resolve(true);
