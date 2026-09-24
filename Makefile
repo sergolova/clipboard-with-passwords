@@ -3,10 +3,12 @@
 # `gsettings --schemadir schemas` must see the keys for live debugging.
 # The EGO bundle must NOT contain it — GNOME 45+ compiles the schema from the
 # .xml at install time (shexli rule EGO-P-006). Likewise, only compiled .mo
-# travels; .po/.pot stay out of the package.
+# travels; .po/.pot stay out of the package. README.md stays out too — it is
+# inert at runtime, the EGO page has its own Readme field, and upstream
+# clipboard-indicator ships only the license in the bundle.
 JS_LIBS     = *.js
 LOCALES     = locale/*/LC_MESSAGES/*.mo
-META        = metadata.json stylesheet.css LICENSE.rst README.md
+META        = metadata.json stylesheet.css LICENSE.rst
 SCHEMA_XML  = schemas/org.gnome.shell.extensions.clipboard-indicator.gschema.xml
 
 MODULES        = $(JS_LIBS) $(LOCALES) $(META) schemas/

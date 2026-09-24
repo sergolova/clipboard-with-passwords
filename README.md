@@ -28,9 +28,11 @@ Clipboard entries are detected and visually distinguished by their content type,
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
 
-Image previews: see the dedicated [🖼️ Image previews](#-image-previews) section below.
+Image previews: see the dedicated [🖼️ Image previews](#image-previews) section below.
 
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
+
+<a name="image-previews"></a>
 
 ### 🖼️ Image previews
 Image items get a **proportional thumbnail** — non-square images are no longer squeezed into a square (that is what the original extension did, visibly distorting the picture):
@@ -48,7 +50,7 @@ Pinned (favorite) text items can be **protected** with a single click (`Mark as 
 
 ### 🔐 Built-in password manager
 - Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-indicator/passwords.zip`).
-- The archive is a **standard encrypted ZIP** — it can be read and edited outside the extension (see [The vault archive](#the-vault-archive)).
+- The archive is a **standard encrypted ZIP** — it can be read and edited outside the extension (see [The vault archive](#-the-vault-archive)).
 - The archive contains a single `passwords.json` file, which can also be edited manually.
 - Access is protected by a **master password**.
 
