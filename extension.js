@@ -98,6 +98,26 @@ function stripClipboardEdges(text) {
     return text;
 }
 
+// Clipboard MIME → short extension label shown next to the image size in the
+// menu (e.g. "1920 × 1080 · jpg"). Display-only: cache files keep their
+// content-hash names without an extension.
+const IMAGE_FORMAT_LABELS = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+};
+
+function imageFormatLabel(mimetype) {
+    if (IMAGE_FORMAT_LABELS[mimetype])
+        return IMAGE_FORMAT_LABELS[mimetype];
+    if (mimetype && mimetype.startsWith('image/'))
+        return mimetype.slice('image/'.length).replace('+xml', '');
+    return mimetype;
+}
+
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
         this.clipboardIndicator = new ClipboardIndicator({
@@ -282,7 +302,10 @@ const ClipboardIndicator = GObject.registerClass({
     // The loaded texture stays at its natural size; a fixed-size St.Bin
     // holder (centered via AlignConstraint, same pattern as the full-screen
     // image preview) shows the whole image proportionally scaled.
-    #createAspectImagePreview(entry, previewClass) {
+    // @param {Function|null} onDims - called once with (width, height) once
+    //   the natural image size is known; reuses the same texture load as
+    //   the thumbnail, so no extra I/O or caching is needed.
+    #createAspectImagePreview(entry, previewClass, onDims = null) {
         // Gap between the image and the 1px CSS border of the preview box.
         const PREVIEW_INSET = 2;
         const box = new St.Widget({
@@ -330,15 +353,23 @@ const ClipboardIndicator = GObject.registerClass({
                 }
             };
 
-            const fitTexture = () => {
-                if (fitted)
-                    return;
+            let dimsReported = false;
 
+            const fitTexture = () => {
                 // Natural image size is only known once the texture content
                 // is set; the box pixel size only after allocation. Leave a
                 // small inset so the image never touches the 1px border.
                 const [, natW] = actor.get_preferred_width(-1);
                 const [, natH] = actor.get_preferred_height(-1);
+
+                if (natW > 0 && natH > 0 && !dimsReported) {
+                    dimsReported = true;
+                    if (onDims) onDims(natW, natH);
+                }
+
+                if (fitted)
+                    return;
+
                 const square = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
                 if (natW <= 0 || natH <= 0 || square <= 0)
                     return;
@@ -1044,12 +1075,29 @@ const ClipboardIndicator = GObject.registerClass({
                     MAX_ENTRY_LENGTH));
             }
         } else if (entry.isImage()) {
-            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview');
+            if (menuItem.imageSizeLabel) {
+                menuItem.actor.remove_child(menuItem.imageSizeLabel);
+                menuItem.imageSizeLabel = null;
+            }
+            const sizeLabel = new St.Label({
+                style_class: 'ci-image-size-label',
+                y_align: Clutter.ActorAlign.CENTER,
+                visible: false
+            });
+            menuItem.imageSizeLabel = sizeLabel;
+
+            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview', (w, h) => {
+                if (sizeLabel.get_parent() !== menuItem.actor)
+                    return;
+                sizeLabel.set_text(`${w} × ${h} · ${imageFormatLabel(entry.mimetype())}`);
+                sizeLabel.show();
+            });
             if (menuItem.previewImage) {
                 menuItem.remove_child(menuItem.previewImage);
             }
             menuItem.previewImage = preview;
             menuItem.insert_child_below(preview, menuItem.label);
+            menuItem.insert_child_above(sizeLabel, preview);
         }
     }
 
