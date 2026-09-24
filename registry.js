@@ -2,6 +2,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 import { PrefsFields } from './constants.js';
+import { logError } from './logging.js';
 
 const FileQueryInfoFlags = Gio.FileQueryInfoFlags;
 const FileCopyFlags = Gio.FileCopyFlags;
@@ -53,7 +54,7 @@ export class Registry {
             let file = Gio.file_new_for_path(this.REGISTRY_PATH);
             file.replace_contents(contents.get_data(), null, false, Gio.FileCreateFlags.NONE, null);
         } catch (e) {
-            console.error('Clipboard Indicator: failed to write registry file', e);
+            logError('Clipboard Indicator: failed to write registry file', e);
         }
     }
 
@@ -73,7 +74,17 @@ export class Registry {
                 return [];
             }
 
-            const [success, contents] = file.load_contents(null);
+            // Async IO (EGO-X-004): avoid blocking the shell main loop while
+            // reading the registry file back at startup.
+            const [success, contents] = await new Promise((resolve, reject) => {
+                file.load_contents_async(null, (src, res) => {
+                    try {
+                        resolve(src.load_contents_finish(res));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
             if (!success || !contents) {
                 return [];
             }
@@ -99,7 +110,7 @@ export class Registry {
 
             return clipboardEntries;
         } catch (e) {
-            console.error('Clipboard Indicator: failed to read registry file', e);
+            logError('Clipboard Indicator: failed to read registry file', e);
             return [];
         }
     }
@@ -154,7 +165,7 @@ export class Registry {
             await file.delete_async(GLib.PRIORITY_DEFAULT, null);
         }
         catch (e) {
-            console.error(e);
+            logError(e);
         }
     }
 
@@ -172,7 +183,7 @@ export class Registry {
 
         }
         catch (e) {
-            console.error(e);
+            logError(e);
         }
     }
 }

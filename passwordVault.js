@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import { logWarn } from './logging.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
 // translated word (e.g. 'Все'/'All'): such a word could collide with a real
@@ -214,7 +215,7 @@ export class PasswordVaultManager {
             try {
                 zipFile.copy(bakFile, Gio.FileCopyFlags.OVERWRITE, null, null);
             } catch (e) {
-                console.warn('Failed to create backup:', e);
+                logWarn('Failed to create backup:', e);
             }
         }
 

@@ -22,6 +22,9 @@ function createPasteButton(entry) {
         child: new St.Icon({icon_name: 'edit-paste-symbolic', icon_size: 14})
     });
     btn.connect('clicked', () => {
+        // EGO-A-005 (manual review): reading the clipboard here is the Paste
+        // semantic of a clipboard manager — pull the current text and insert
+        // it into the password field.
         St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_clipboard, text) => {
             if (!text) return;
             const ct = entry.clutter_text;

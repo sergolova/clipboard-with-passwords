@@ -1,6 +1,7 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Soup from 'gi://Soup?version=3.0';
+import { logError } from './logging.js';
 
 export class BaseUrlProvider {
     /**
@@ -149,7 +150,7 @@ export class UrlMetadataManager {
                 this.saveCache();
                 return cacheEntry;
             } catch (err) {
-                console.error(`UrlMetadataManager fetch failed for ${trimmed}:`, err);
+                logError(`UrlMetadataManager fetch failed for ${trimmed}:`, err);
                 const negativeEntry = {
                     failed: true,
                     timestamp: Date.now()
@@ -166,14 +167,25 @@ export class UrlMetadataManager {
         return fetchPromise;
     }
 
-    loadCache() {
+    async loadCache() {
         if (!GLib.file_test(this.#cachePath, GLib.FileTest.EXISTS)) {
             return;
         }
 
         try {
             const file = Gio.file_new_for_path(this.#cachePath);
-            const [success, contents] = file.load_contents(null);
+            // Async IO (EGO-X-004): do not block the shell main loop while
+            // reading the fetch cache. The cache is only a speed optimization,
+            // so the constructor fires this call without awaiting it.
+            const [success, contents] = await new Promise((resolve, reject) => {
+                file.load_contents_async(null, (src, res) => {
+                    try {
+                        resolve(src.load_contents_finish(res));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
             if (success && contents) {
                 const textData = new TextDecoder('utf-8').decode(contents);
                 if (textData.trim().length > 0) {
@@ -186,7 +198,7 @@ export class UrlMetadataManager {
                 }
             }
         } catch (e) {
-            console.error('UrlMetadataManager: failed to load url cache file', e);
+            logError('UrlMetadataManager: failed to load url cache file', e);
         }
     }
 
@@ -205,7 +217,7 @@ export class UrlMetadataManager {
             const file = Gio.file_new_for_path(this.#cachePath);
             file.replace_contents(contents.get_data(), null, false, Gio.FileCreateFlags.NONE, null);
         } catch (e) {
-            console.error('UrlMetadataManager: failed to save url cache', e);
+            logError('UrlMetadataManager: failed to save url cache', e);
         }
     }
 
@@ -216,7 +228,7 @@ export class UrlMetadataManager {
                 const file = Gio.file_new_for_path(this.#cachePath);
                 file.delete(null);
             } catch (e) {
-                console.error('UrlMetadataManager: error deleting cache file', e);
+                logError('UrlMetadataManager: error deleting cache file', e);
             }
         }
     }

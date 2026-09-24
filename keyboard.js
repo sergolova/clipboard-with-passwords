@@ -1,5 +1,6 @@
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { logWarn } from './logging.js';
 
 export class Keyboard {
     #device = null;
@@ -12,7 +13,7 @@ export class Keyboard {
                 this.#device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
             }
         } catch (e) {
-            console.warn('Clipboard Indicator: failed to create virtual keyboard device', e);
+            logWarn('Clipboard Indicator: failed to create virtual keyboard device', e);
         }
 
         try {
@@ -20,7 +21,7 @@ export class Keyboard {
                 this.#contentPurpose = method.content_purpose;
             }, this);
         } catch (e) {
-            console.warn('Clipboard Indicator: failed to connect inputMethod notify', e);
+            logWarn('Clipboard Indicator: failed to connect inputMethod notify', e);
         }
     }
 
@@ -29,13 +30,10 @@ export class Keyboard {
             Main.inputMethod.disconnectObject(this);
         } catch (e) {}
         if (this.#device) {
-            try {
-                // run_dispose() is required here: the virtual keyboard device
-                // was explicitly created via seat.create_virtual_device() and
-                // owns backend resources. Plain destroy()/unref would leak
-                // the Clutter device, so we must dispose it explicitly.
-                this.#device.run_dispose();
-            } catch (e) {}
+            // Just drop the reference: the virtual keyboard device was created
+            // via seat.create_virtual_device() and is owned by the seat/backend,
+            // so releasing our reference finalizes it (EGO-X-003: extension code
+            // must not call run_dispose()).
             this.#device = null;
         }
     }
@@ -49,7 +47,7 @@ export class Keyboard {
                 state
             );
         } catch (e) {
-            console.warn('Clipboard Indicator: notify_keyval failed', e);
+            logWarn('Clipboard Indicator: notify_keyval failed', e);
         }
     }
 

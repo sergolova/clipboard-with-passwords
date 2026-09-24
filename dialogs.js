@@ -4,6 +4,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import { logError } from './logging.js';
 import {themeClass, themeColors} from './theme.js';
 
 /**
@@ -371,8 +372,8 @@ export class ImagePreviewOverlay {
 
             bin.set_child(actor);
         }).catch(e => {
-            console.error('Clipboard Indicator: failed to load image preview');
-            console.error(e);
+            logError('Clipboard Indicator: failed to load image preview');
+            logError(e);
         });
     }
 

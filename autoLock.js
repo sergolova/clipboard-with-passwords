@@ -1,4 +1,5 @@
 import Gio from 'gi://Gio';
+import { logWarn } from './logging.js';
 
 /**
  * Subscribes to the OS signals that gate the password vault's auto-lock and
@@ -42,7 +43,7 @@ export class AutoLockManager {
                     () => this._onAutoLock('screen-lock'));
             }
         } catch (e) {
-            console.warn('Clipboard Indicator: cannot subscribe to screen lock:', e);
+            logWarn('Clipboard Indicator: cannot subscribe to screen lock:', e);
         }
 
         // Suspend / resume (system bus, requires a non-sandboxed extension).
@@ -69,7 +70,7 @@ export class AutoLockManager {
                 );
             }
         } catch (e) {
-            console.warn('Clipboard Indicator: cannot subscribe to suspend:', e);
+            logWarn('Clipboard Indicator: cannot subscribe to suspend:', e);
         }
     }
 

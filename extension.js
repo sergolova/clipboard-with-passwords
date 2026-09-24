@@ -26,6 +26,7 @@ import {PasswordVaultManager} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
 import {themeClass, themeColors} from './theme.js';
+import {logError, logWarn} from './logging.js';
 
 const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
@@ -121,6 +122,9 @@ function imageFormatLabel(mimetype) {
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
         this.clipboardIndicator = new ClipboardIndicator({
+            // EGO-A-005 (manual review): direct St.Clipboard access is the core
+            // purpose of this extension — it must watch and drive the clipboard
+            // to build and restore the history.
             clipboard: St.Clipboard.get_default(),
             settings: this.getSettings(),
             openSettings: this.openPreferences,
@@ -151,6 +155,14 @@ const ClipboardIndicator = GObject.registerClass({
         this._disconnectThemeListeners();
         this._unbindShortcuts();
         this._disconnectSelectionListener();
+        // EGO-L-003: disconnect signals registered via connectObject(…, this).
+        this.menu.disconnectObject(this);
+        if (this.resetTimerButton)
+            this.resetTimerButton.disconnectObject(this);
+        if (this.clearMenuItem)
+            this.clearMenuItem.disconnectObject(this);
+        if (this.settingsMenuItem)
+            this.settingsMenuItem.disconnectObject(this);
         this._clearDelayedSelectionTimeout();
         this.#clearTimeouts();
         this.#closeImagePreview();
@@ -194,7 +206,7 @@ const ClipboardIndicator = GObject.registerClass({
         this._cursorActor = new Clutter.Actor({opacity: 0, width: 1, height: 1});
         Main.uiGroup.add_child(this._cursorActor);
 
-        this.menu.connect('open-state-changed', (menu, isOpen) => {
+        this.menu.connectObject('open-state-changed', (menu, isOpen) => {
             if (!isOpen) {
                 // Never leave a stale image preview behind when the menu
                 // closes while a hover preview is up.
@@ -204,7 +216,7 @@ const ClipboardIndicator = GObject.registerClass({
                     this._showHistoryMenu();
                 }
             }
-        });
+        }, this);
 
         this.extension = extension;
         this._destroyed = false;
@@ -220,7 +232,7 @@ const ClipboardIndicator = GObject.registerClass({
         try {
             vaultPath = extension.settings.get_string(PrefsFields.PASSWORD_VAULT_PATH) || vaultPath;
         } catch (e) {
-            console.warn('Clipboard Indicator: password-vault-path fallback used', e);
+            logWarn('Clipboard Indicator: password-vault-path fallback used', e);
         }
         this.vaultManager = new PasswordVaultManager(vaultPath);
         this.ignoreNextClipboardChange = false;
@@ -520,7 +532,7 @@ const ClipboardIndicator = GObject.registerClass({
 
         this._entryItem.add_child(this.searchEntry);
 
-        this.menu.connect('open-state-changed', (self, open) => {
+        this.menu.connectObject('open-state-changed', (self, open) => {
             this._setFocusOnOpenTimeout = setTimeout(() => {
                 if (!open) return;
 
@@ -552,7 +564,7 @@ const ClipboardIndicator = GObject.registerClass({
                     global.stage.set_key_focus(this.privateModeMenuItem.actor);
                 }
             }, 50);
-        });
+        }, this);
 
         // Create menu sections for items
         // Favorites
@@ -645,15 +657,15 @@ const ClipboardIndicator = GObject.registerClass({
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        this.resetTimerButton.connect('clicked', () => {
+        this.resetTimerButton.connectObject('clicked', () => {
             this._scheduleNextHistoryClear();
-        });
+        }, this);
 
         timerBox.add_child(this.timerLabel);
         timerBox.add_child(this.resetTimerButton);
         this.clearMenuItem.add_child(timerBox);
 
-        this.clearMenuItem.connect('activate', this._removeAll.bind(this));
+        this.clearMenuItem.connectObject('activate', this._removeAll.bind(this), this);
 
         // Add 'Settings' menu item to open settings
         this.settingsMenuItem = new PopupMenu.PopupMenuItem(_('Settings'));
@@ -665,7 +677,7 @@ const ClipboardIndicator = GObject.registerClass({
             }),
             0
         );
-        this.settingsMenuItem.connect('activate', this._openSettings.bind(this));
+        this.settingsMenuItem.connectObject('activate', this._openSettings.bind(this), this);
 
         // Empty state section
         this.emptyStateSection = new St.BoxLayout({
@@ -1089,7 +1101,7 @@ const ClipboardIndicator = GObject.registerClass({
                                 this._renderTwoLineBox(menuItem, this._truncate(urlText, MAX_ENTRY_LENGTH), this._truncate(meta.title, 80));
                             }
                         }).catch(e => {
-                            console.error('Error fetching URL metadata:', e);
+                            logError('Error fetching URL metadata:', e);
                         });
                     }
                 }
@@ -1857,8 +1869,8 @@ const ClipboardIndicator = GObject.registerClass({
                 this._blinkIcon();
             }
         } catch (e) {
-            console.error('Clipboard Indicator: Failed to refresh indicator');
-            console.error(e);
+            logError('Clipboard Indicator: Failed to refresh indicator');
+            logError(e);
         } finally {
             this.#refreshInProgress = false;
         }
@@ -2106,7 +2118,7 @@ const ClipboardIndicator = GObject.registerClass({
             this.#getClipboardContent().then(entry => {
                 if (!entry) return;
                 this.#updateIndicatorContent(entry);
-            }).catch(e => console.error(e));
+            }).catch(e => logError(e));
 
             this.hbox.remove_style_class_name('private-mode');
             this.#showElements();
@@ -2234,8 +2246,8 @@ const ClipboardIndicator = GObject.registerClass({
             // Respect UI toggles
             this.#showElements();
         } catch (e) {
-            console.error('Clipboard Indicator: Failed to update registry');
-            console.error(e);
+            logError('Clipboard Indicator: Failed to update registry');
+            logError(e);
         }
     }
 
