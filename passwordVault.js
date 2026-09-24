@@ -65,19 +65,50 @@ export function resolveVaultPath(pathStr) {
 // format and reports "Unsupported archive type" for ZIP archives.
 const ARCHIVE_BINARIES = ['7z', '7za'];
 
+// System locations checked *before* the user's PATH. The PATH of a shell
+// session can be tampered with (a fake `7z` earlier in the search order
+// would be executed with the user's privileges); these paths are under
+// root's control and cover Debian/Ubuntu/Fedora/Arch layouts.
+const ARCHIVE_BINARY_PATHS = [
+    '/usr/bin/7z',
+    '/usr/bin/7za',
+    '/bin/7z',
+    '/bin/7za',
+];
+
 // Cached so we don't re-probe PATH on every unlock/save. Only a *found*
 // binary is cached — a null result is re-probed each time so a binary
 // installed after the shell started is picked up.
 let _archiveBinary = null;
 
+// A usable backend must be an executable file that is not a directory.
+// Regular binaries and symlinks to them (e.g. `7za -> 7z` on Arch) both
+// qualify; a directory with the exec bits set does not.
+function isUsableArchiveBinary(path) {
+    if (!path) return false;
+    const isFile = GLib.file_test(path, GLib.FileTest.IS_REGULAR) ||
+                   GLib.file_test(path, GLib.FileTest.IS_SYMLINK);
+    if (!isFile) return false;
+    return GLib.file_test(path, GLib.FileTest.IS_EXECUTABLE);
+}
+
 function resolveArchiveBinary() {
     if (_archiveBinary) {
         return _archiveBinary;
     }
+    // 1. Fixed system paths first — cannot be swapped by a user's PATH.
+    for (const path of ARCHIVE_BINARY_PATHS) {
+        if (isUsableArchiveBinary(path)) {
+            _archiveBinary = path;
+            return path;
+        }
+    }
+    // 2. Only then fall back to the user's PATH (unusual install locations).
     for (const name of ARCHIVE_BINARIES) {
-        if (GLib.find_program_in_path(name)) {
-            _archiveBinary = name;
-            return name;
+        const path = GLib.find_program_in_path(name);
+        if (isUsableArchiveBinary(path)) {
+            _archiveBinary = path;
+            return path;
         }
     }
     return null;
