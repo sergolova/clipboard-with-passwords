@@ -229,38 +229,65 @@ export class PasswordVaultManager {
             }
         }
 
-        const tmpDir = GLib.get_tmp_dir();
-        const tmpJsonPath = GLib.build_filenamev([tmpDir, `ci_vault_${Date.now()}.json`]);
-        const tmpFile = Gio.File.new_for_path(tmpJsonPath);
-
-        // Always serialize a sanitized copy so empty/false fields never
-        // reappear in the stored JSON (e.g. after hand-editing a file).
-        const jsonStr = JSON.stringify({
-            version: this.data.version || 1,
-            items: (this.data.items || []).map(it => this._sanitizeItem(it))
-        }, null, 2);
-        const stream = tmpFile.replace(null, false, Gio.FileCreateFlags.NONE, null);
-        stream.write_all(jsonStr, null);
-        stream.close(null);
-
-        const tmpSubDir = GLib.build_filenamev([tmpDir, `ci_vault_dir_${Date.now()}`]);
+        // Private temporary directory for the plaintext JSON. `dir_make_tmp`
+        // creates it inside G_TMP_DIR with mode 0700, so no other local user
+        // can read or even list the file while `7z a` is packing it (the
+        // previous flat `ci_vault_<ts>.json` in /tmp was world-readable
+        // ~0644). The template is a bare basename without any "XXXXXX"
+        // substitution of its own.
+        const tmpSubDir = GLib.dir_make_tmp('ci_vault_XXXXXX');
         const tmpSubDirFile = Gio.File.new_for_path(tmpSubDir);
-        tmpSubDirFile.make_directory_with_parents(null);
-
         const dataJsonPath = GLib.build_filenamev([tmpSubDir, VAULT_MEMBER_NAME]);
         const dataJsonFile = Gio.File.new_for_path(dataJsonPath);
-        tmpFile.move(dataJsonFile, Gio.FileCopyFlags.OVERWRITE, null, null);
+
+        // Remove the private dir again on any early failure (and in the
+        // `7z a` callback) so no plaintext JSON is left behind in /tmp.
+        const cleanupTmp = () => {
+            try {
+                dataJsonFile.delete(null);
+            } catch (e) {
+            }
+            try {
+                tmpSubDirFile.delete(null);
+            } catch (e) {
+            }
+        };
+
+        try {
+            // Always serialize a sanitized copy so empty/false fields never
+            // reappear in the stored JSON (e.g. after hand-editing a file).
+            const jsonStr = JSON.stringify({
+                version: this.data.version || 1,
+                items: (this.data.items || []).map(it => this._sanitizeItem(it))
+            }, null, 2);
+            const stream = dataJsonFile.replace(null, false, Gio.FileCreateFlags.NONE, null);
+            stream.write_all(jsonStr, null);
+            stream.close(null);
+            // Belt & suspenders on top of the 0700 dir: the JSON itself is
+            // readable by the owner only. A failure here (exotic filesystem)
+            // must not abort the save — the private dir already shields it.
+            try {
+                dataJsonFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
+            } catch (chmodErr) {
+                logWarn('Failed to tighten temp vault JSON permissions:', chmodErr);
+            }
+        } catch (e) {
+            cleanupTmp();
+            throw e;
+        }
 
         if (zipFile.query_exists(null)) {
             try {
                 zipFile.delete(null);
             } catch (e) {
+                cleanupTmp();
                 throw new Error(_('Failed to update the password vault archive.') + '\n' + (e && e.message ? e.message : ''));
             }
         }
 
         const archiveBinary = resolveArchiveBinary();
         if (!archiveBinary) {
+            cleanupTmp();
             throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
 
@@ -277,16 +304,13 @@ export class PasswordVaultManager {
             });
             proc.init(null);
         } catch (e) {
+            cleanupTmp();
             throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
 
         return new Promise((resolve, reject) => {
             proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc, res) => {
-                try {
-                    dataJsonFile.delete(null);
-                    tmpSubDirFile.delete(null);
-                } catch (e) {
-                }
+                cleanupTmp();
 
                 try {
                     const [, , stderr] = proc.communicate_utf8_finish(res);
