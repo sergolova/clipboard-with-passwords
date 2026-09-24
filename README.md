@@ -27,6 +27,8 @@ Clipboard entries are detected and visually distinguished by their content type,
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
 
+Image previews: **hover** over the preview button for a quick full-screen look (auto-dismisses when the pointer leaves). The hover behavior can be turned off in the settings («Preview on hover») — the click/keyboard (`h`) interactive preview always works.
+
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
 
 ### 🛡️ Protect pinned items
@@ -55,11 +57,15 @@ Pinned (favorite) text items can be flagged as a **password** with a single clic
 ### 🏷️ Flexible service records
 - Besides the standard **login** and **password**, each service supports **arbitrary custom fields** (e.g. 2FA code, PIN, recovery key).
 - Each custom field can be **hidden** (shown as `••••••••`, toggleable with one click).
-- **Hidden-field safety check** — a ⚠️ warning icon is shown next to any hidden
-  value (password or custom field) that **starts or ends with a space, a line
-  break or a non-printable character** (zero-width space, BOM, control char…).
-  Such edge characters are invisible behind the dots and are almost always a
-  typo (stray space, paste artifact) — the warning makes them visible at a glance.
+- **Hidden-field edge warning (opt-in, off by default)** — a ⚠️ warning icon
+  can be shown next to any hidden value (password or custom field) that
+  **starts or ends with a space, a line break or a non-printable character**
+  (zero-width space, BOM, control char…). Such edge characters are invisible
+  behind the dots and are almost always a typo (stray space, paste artifact) —
+  the icon makes them visible at a glance. It is **off by default** because the
+  icon also reveals *metadata* about the secret value to anyone viewing the
+  screen (e.g. during screen sharing); enable it in the settings
+  («Hidden-field edge warning»).
 
 <p align="center">
   <img src="screenshots/vault-warning-icon.png" alt="Warning icon next to a hidden field with a stray leading/trailing character" height="150"/>
@@ -332,10 +338,12 @@ Compared to the original extension, these settings were added:
 | `toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
 | `vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
 | `vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |
+| `vault-hidden-edge-warning` | boolean | `false` | Show a ⚠️ icon next to hidden passwords/fields whose value starts or ends with a space, line break or non-printable character. Catches invisible paste typos, but reveals metadata about the secret value to onlookers (off by default) |
 | `vault-password-request` | string | `session` | When to ask for the master password: `session` (once per session), `after-sleep` (re-ask only after a real suspend, plain screen lock keeps the vault unlocked), `every-open` (ask on every vault opening) |
 | `vault-reset-search-on-close` | boolean | `true` | Reset the vault search filter when the vault menu closes |
 | `colorize-clipboard` | boolean | `true` | Colorize clipboard entries by content type |
 | `fetch-youtube-titles` | boolean | `false` | Fetch and show YouTube video titles for copied links. ⚠️ Enabling this sends the copied YouTube link (clipboard data) to a third party — `https://www.youtube.com/oembed` |
+| `preview-on-hover` | boolean | `true` | Show the image preview while hovering over the preview button (click/keyboard preview always works) |
 
 ## 🛠 Development
 

@@ -161,6 +161,10 @@
       <default>true</default>
       <summary>Show preview button</summary>
     </key>
+    <key name="preview-on-hover" type="b">
+      <default>true</default>
+      <summary>Show image preview on hover</summary>
+    </key>
 
     <key name="password-vault-path" type="s">
       <default>'~/.config/clipboard-indicator/passwords.zip'</default>
@@ -185,6 +189,11 @@
     <key name="vault-hide-all-category" type="b">
       <default>false</default>
       <summary>Hide services when the "All" category is selected until the user types in the search box</summary>
+    </key>
+    <key name="vault-hidden-edge-warning" type="b">
+      <default>false</default>
+      <summary>Warn about edge characters in hidden vault values</summary>
+      <description>Show a warning icon when a hidden password or field starts or ends with a space, line break or non-printable character. Catches invisible paste typos, but the icon also reveals metadata about the secret value to anyone viewing the screen (e.g. during screen sharing). Off by default.</description>
     </key>
     <key name="vault-password-request" type="s">
       <default>'session'</default>

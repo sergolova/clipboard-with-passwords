@@ -209,6 +209,11 @@ class Settings {
             subtitle: _("Show the preview button on each image item")
         });
 
+        this.field_preview_on_hover = new Adw.SwitchRow({
+            title: _("Preview on hover"),
+            subtitle: _("Show the image preview while hovering over the preview button")
+        });
+
         this.field_cache_images = new Adw.SwitchRow({
             title: _("Cache images"),
             subtitle: _("Save copied images to clipboard history"),
@@ -302,6 +307,11 @@ class Settings {
             subtitle: _("When 'All' is selected, show nothing until you search (extra privacy)")
         });
 
+        this.field_vault_hidden_edge_warning = new Adw.SwitchRow({
+            title: _("Hidden-field edge warning"),
+            subtitle: _("Show a ⚠️ icon when a hidden password or field starts or ends with a space, line break or non-printable character. Catches invisible paste typos (Ctrl+V artifact, stray space), but the icon also reveals metadata about the secret value to anyone viewing the screen, e.g. during screen sharing. Off by default.")
+        });
+
         this.field_vault_password_request = new Adw.ComboRow({
             title: _("When to ask for the master password"),
             subtitle: _("How often the password vault requests the master password"),
@@ -337,6 +347,7 @@ class Settings {
         this.password_vault.add(this.field_password_vault_path);
         this.password_vault.add(this.field_vault_pin_recent);
         this.password_vault.add(this.field_vault_hide_all_category);
+        this.password_vault.add(this.field_vault_hidden_edge_warning);
         this.password_vault.add(this.field_vault_password_request);
         this.password_vault.add(this.field_vault_reset_search);
         this.password_vault.add(this.field_vault_copy_to_history);
@@ -388,6 +399,7 @@ class Settings {
         this.item_actions.add(this.field_show_pin_button);
         this.item_actions.add(this.field_show_edit_button);
         this.item_actions.add(this.field_show_preview_button);
+        this.item_actions.add(this.field_preview_on_hover);
 
         this.#buildShorcuts(this.shortcuts);
 
@@ -428,10 +440,12 @@ class Settings {
         this.schema.bind(PrefsFields.SHOW_PIN_BUTTON, this.field_show_pin_button, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.SHOW_EDIT_BUTTON, this.field_show_edit_button, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.SHOW_PREVIEW_BUTTON, this.field_show_preview_button, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.PREVIEW_ON_HOVER, this.field_preview_on_hover, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.COLORIZE_CLIPBOARD, this.field_colorize_clipboard, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.FETCH_YOUTUBE_TITLES, this.field_fetch_youtube_titles, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_PIN_RECENT, this.field_vault_pin_recent, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_HIDE_ALL_CATEGORY, this.field_vault_hide_all_category, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_HIDDEN_EDGE_WARNING, this.field_vault_hidden_edge_warning, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_ENABLED, this.field_vault_enabled, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_COPY_TO_HISTORY, this.field_vault_copy_to_history, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_RESET_SEARCH_ON_CLOSE, this.field_vault_reset_search, 'active', Gio.SettingsBindFlags.DEFAULT);

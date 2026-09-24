@@ -240,21 +240,46 @@ export function showEditDialog(menuItem, {
  * Full-screen dimmed overlay that shows one image entry at most half the
  * monitor size. Owns its overlay actor so the indicator only holds a
  * reference to the manager (destroy() just calls close()).
+ *
+ * The interactive overlay is added via Main.layoutManager.addChrome() so it
+ * takes part in the shell's input region: on X11 GNOME Shell only delivers
+ * pointer events to the stage inside the union of tracked chrome rects, so a
+ * plain global.stage child would swallow no clicks over the app area at all
+ * (clicks fall through and focus the app; only panel clicks reach it). The
+ * hover (non-interactive) overlay must stay UNtracked — while it is up it must
+ * not steal clicks from the application underneath.
  */
 export class ImagePreviewOverlay {
     constructor({registry}) {
         this._registry = registry;
         this._overlay = null;
+        this._overlayChromeTracked = false;
     }
 
-    show(entry, onClose = null) {
+    /**
+     * Show the preview.
+     *
+     * @param {object} entry - ClipboardEntry to render
+     * @param {object} [opts]
+     * @param {boolean} [opts.interactive=true] - interactive overlay: added
+     *   as tracked chrome (input region) so every click on the monitor is
+     *   delivered to it; grabs focus, closes on click/Escape. Hover previews
+     *   pass false — the overlay then sits untracked in uiGroup and does not
+     *   take part in pointer picking, so the triggering button keeps
+     *   receiving enter/leave events (a reactive full-screen actor on top
+     *   would fire the button's leave-event and loop
+     *   enter→show→leave→close) and the open menu underneath stays
+     *   clickable.
+     * @param {Function} [opts.onClose] - called when the overlay closes
+     */
+    show(entry, {interactive = true, onClose = null} = {}) {
         this.close();
 
         const monitor = Main.layoutManager.currentMonitor;
 
         const overlay = new St.Widget({
-            reactive: true,
-            can_focus: true,
+            reactive: interactive,
+            can_focus: interactive,
             x: monitor.x,
             y: monitor.y,
             width: monitor.width,
@@ -263,26 +288,43 @@ export class ImagePreviewOverlay {
         });
 
         this._overlay = overlay;
-        global.stage.add_child(overlay);
-        overlay.grab_key_focus();
+        this._overlayChromeTracked = false;
 
-        const close = () => {
-            this.close();
-            if (onClose) onClose();
-        };
+        if (interactive) {
+            // Track the overlay as chrome (addChrome -> uiGroup + input
+            // region). On X11 the shell delivers pointer clicks to the stage
+            // only inside the tracked-chrome input region; a plain
+            // global.stage child is input-invisible there, so clicks fell
+            // through to the app underneath (it took focus) and only panel
+            // clicks (panel IS in the region) dismissed the preview. While
+            // the interactive overlay is tracked, the whole monitor is in
+            // the region, so every click is delivered to the overlay.
+            Main.layoutManager.addChrome(overlay);
+            this._overlayChromeTracked = true;
+        } else {
+            // Hover preview: visual only, deliberately NOT tracked — it must
+            // not swallow clicks over the application while it is up.
+            Main.uiGroup.add_child(overlay);
+        }
 
-        overlay._previewClickId = overlay.connect('button-press-event', () => {
-            close();
-            return Clutter.EVENT_STOP;
-        });
+        if (interactive) {
+            overlay.grab_key_focus();
 
-        overlay._previewKeyId = overlay.connect('key-press-event', (_actor, event) => {
-            if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                close();
+            overlay._previewClickId = overlay.connect('button-press-event', () => {
+                this.close();
+                if (onClose) onClose();
                 return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
+            });
+
+            overlay._previewKeyId = overlay.connect('key-press-event', (_actor, event) => {
+                if (event.get_key_symbol() === Clutter.KEY_Escape) {
+                    this.close();
+                    if (onClose) onClose();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
 
         const maxW = Math.floor(monitor.width * 0.5);
         const maxH = Math.floor(monitor.height * 0.4);
@@ -342,7 +384,15 @@ export class ImagePreviewOverlay {
         if (overlay._previewClickId) overlay.disconnect(overlay._previewClickId);
         if (overlay._previewKeyId) overlay.disconnect(overlay._previewKeyId);
 
-        if (overlay.get_parent()) global.stage.remove_child(overlay);
+        if (this._overlayChromeTracked) {
+            // Untrack first: removeChrome drops the overlay from the input
+            // region and queues a region update, so clicks return to normal
+            // (apps clickable again) as soon as the preview is gone.
+            Main.layoutManager.removeChrome(overlay);
+            this._overlayChromeTracked = false;
+        } else if (overlay.get_parent()) {
+            overlay.get_parent().remove_child(overlay);
+        }
         overlay.destroy();
     }
 }

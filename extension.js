@@ -72,6 +72,7 @@ let SHOW_TAG_BUTTON = true;
 let SHOW_PIN_BUTTON = true;
 let SHOW_EDIT_BUTTON = true;
 let SHOW_PREVIEW_BUTTON = true;
+let PREVIEW_ON_HOVER = true;
 let COLORIZE_CLIPBOARD = true;
 let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
@@ -175,6 +176,9 @@ const ClipboardIndicator = GObject.registerClass({
 
         this.menu.connect('open-state-changed', (menu, isOpen) => {
             if (!isOpen) {
+                // Never leave a stale image preview behind when the menu
+                // closes while a hover preview is up.
+                this.imagePreview.close();
                 this.menu.sourceActor = this;
                 if (this.isVaultMode) {
                     this._showHistoryMenu();
@@ -1263,7 +1267,20 @@ const ClipboardIndicator = GObject.registerClass({
                 x_expand: false,
                 y_expand: true,
             });
+            // Hover preview: while the pointer stays over the button, show the
+            // same full-screen image preview; it auto-dismisses on leave and
+            // the menu stays open (the overlay is non-reactive, so pointer
+            // events keep reaching the menu). Clicking still opens the
+            // interactive preview (also reachable via keyboard 'h'). Hover is
+            // controlled by the PREVIEW_ON_HOVER setting (default on).
             menuItem.imagePreviewBtn.connect('clicked', () => this.#showImagePreview(entry));
+            menuItem.imagePreviewBtn.connect('enter-event', () => {
+                if (PREVIEW_ON_HOVER)
+                    this.imagePreview.show(entry, {interactive: false});
+            });
+            menuItem.imagePreviewBtn.connect('leave-event', () => {
+                this.imagePreview.close();
+            });
             menuItem.actor.add_child(menuItem.imagePreviewBtn);
         }
 
@@ -1962,6 +1979,11 @@ const ClipboardIndicator = GObject.registerClass({
         SHOW_PIN_BUTTON = settings.get_boolean(PrefsFields.SHOW_PIN_BUTTON);
         SHOW_EDIT_BUTTON = settings.get_boolean(PrefsFields.SHOW_EDIT_BUTTON);
         SHOW_PREVIEW_BUTTON = settings.get_boolean(PrefsFields.SHOW_PREVIEW_BUTTON);
+        try {
+            PREVIEW_ON_HOVER = settings.get_boolean(PrefsFields.PREVIEW_ON_HOVER);
+        } catch (e) {
+            PREVIEW_ON_HOVER = true;
+        }
         COLORIZE_CLIPBOARD = settings.get_boolean(PrefsFields.COLORIZE_CLIPBOARD);
         FETCH_YOUTUBE_TITLES = settings.get_boolean(PrefsFields.FETCH_YOUTUBE_TITLES);
         VAULT_ENABLED = settings.get_boolean(PrefsFields.VAULT_ENABLED);
@@ -2345,7 +2367,7 @@ const ClipboardIndicator = GObject.registerClass({
 
     #showImagePreview(entry, onClose = null) {
         this.menu.close();
-        this.imagePreview.show(entry, onClose);
+        this.imagePreview.show(entry, {interactive: true, onClose});
     }
 
     // Reopen the indicator menu after a dialog closes, with focus back on the

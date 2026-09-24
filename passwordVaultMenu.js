@@ -12,7 +12,8 @@ import { themeColors } from './theme.js';
 // A hidden (password / isHidden) field value that starts or ends with
 // whitespace (space, tab, line breaks) or a non-printable character
 // (control chars, zero-width space, BOM, …) is almost always a typo the user
-// cannot see behind the dots — flag it with a warning icon.
+// cannot see behind the dots — flag it with a warning icon. The flag is
+// opt-in (see PasswordVaultMenuSection._hiddenEdgeWarning), off by default.
 const INVISIBLE_EDGE_RE = /^[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]|[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]$/;
 
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
@@ -51,6 +52,19 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             } catch (e) {
             }
         }
+        return false;
+    }
+
+    get _hiddenEdgeWarning() {
+        if (this.settings) {
+            try {
+                return this.settings.get_boolean(PrefsFields.VAULT_HIDDEN_EDGE_WARNING);
+            } catch (e) {
+            }
+        }
+        // Off by default: the warning icon is a metadata side-channel about
+        // the secret value (it reveals that the value has edge junk to anyone
+        // viewing the screen), so it is opt-in.
         return false;
     }
 
@@ -563,7 +577,9 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         // Warn about leading/trailing junk in the stored value: invisible
         // whitespace or non-printable chars at the edges are a common typo
         // (Ctrl+V artifact, stray space) that stays hidden behind the dots.
-        if (isPassword && INVISIBLE_EDGE_RE.test(valueStr)) {
+        // Opt-in (vault-hidden-edge-warning, default off) — the icon also
+        // leaks metadata about the secret to onlookers.
+        if (isPassword && this._hiddenEdgeWarning && INVISIBLE_EDGE_RE.test(valueStr)) {
             let warnIcon = new St.Icon({
                 icon_name: 'dialog-warning-symbolic',
                 icon_size: 14,
