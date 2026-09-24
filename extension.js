@@ -78,6 +78,8 @@ let COLORIZE_CLIPBOARD = true;
 let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
 let VAULT_COPY_TO_HISTORY = false;
+let VAULT_CLEAR_CLIPBOARD = true;
+let VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
 let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
 let VAULT_RESET_SEARCH_ON_CLOSE = true;
 
@@ -716,6 +718,7 @@ const ClipboardIndicator = GObject.registerClass({
                 if (NOTIFY_ON_COPY) {
                     this.notifications.show(_("Copied from vault"));
                 }
+                this.#scheduleVaultClipboardClear(text);
             };
 
             const closeMenuCallback = () => {
@@ -2216,6 +2219,16 @@ const ClipboardIndicator = GObject.registerClass({
         } catch (e) {
             VAULT_RESET_SEARCH_ON_CLOSE = true;
         }
+        try {
+            VAULT_CLEAR_CLIPBOARD = settings.get_boolean(PrefsFields.VAULT_CLEAR_CLIPBOARD);
+        } catch (e) {
+            VAULT_CLEAR_CLIPBOARD = true;
+        }
+        try {
+            VAULT_CLEAR_CLIPBOARD_TIMEOUT = settings.get_int(PrefsFields.VAULT_CLEAR_CLIPBOARD_TIMEOUT);
+        } catch (e) {
+            VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
+        }
     }
 
     async _onSettingsChange() {
@@ -2630,11 +2643,46 @@ const ClipboardIndicator = GObject.registerClass({
         if (this._historyClearTimeoutId) clearTimeout(this._historyClearTimeoutId);
         if (this._timerIntervalId) clearInterval(this._timerIntervalId);
         if (this._blinkAnimationTimeout) clearTimeout(this._blinkAnimationTimeout);
+        if (this._vaultClipboardClearTimeoutId) {
+            clearTimeout(this._vaultClipboardClearTimeoutId);
+            this._vaultClipboardClearTimeoutId = null;
+        }
     }
 
     #clearClipboard() {
         this.extension.clipboard.set_text(CLIPBOARD_TYPE, "");
         this.#updateIndicatorContent(null);
+    }
+
+    /**
+     * If the "clear copied vault secrets" setting is on, wipe the copied
+     * secret from the clipboard after the configured delay. The wipe only
+     * happens while the clipboard still holds exactly the copied value —
+     * anything the user copied in the meantime is left untouched.
+     */
+    #scheduleVaultClipboardClear(text) {
+        if (!VAULT_CLEAR_CLIPBOARD || !text) return;
+
+        if (this._vaultClipboardClearTimeoutId) {
+            clearTimeout(this._vaultClipboardClearTimeoutId);
+            this._vaultClipboardClearTimeoutId = null;
+        }
+
+        const seconds = Math.max(1, VAULT_CLEAR_CLIPBOARD_TIMEOUT);
+        this._vaultClipboardClearTimeoutId = setTimeout(() => {
+            this._vaultClipboardClearTimeoutId = null;
+            if (this._destroyed) return;
+
+            const clipboard = this.extension.clipboard;
+            clipboard.get_text(CLIPBOARD_TYPE, (_clipboard, current) => {
+                if (typeof current !== 'string' || current !== text) return;
+                // Skip the clipboard watcher: the wipe itself must not land
+                // in the history as a new (empty) entry.
+                this.ignoreNextClipboardChange = true;
+                clipboard.set_text(CLIPBOARD_TYPE, '');
+                this.#updateIndicatorContent(null);
+            });
+        }, seconds * 1000);
     }
 
     async #updateClipboard(entry) {

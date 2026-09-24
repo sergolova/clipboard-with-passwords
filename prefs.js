@@ -323,6 +323,24 @@ class Settings {
             subtitle: _("Clear the search filter in the password vault when the vault menu closes")
         });
 
+        this.field_vault_clear_clipboard = new Adw.SwitchRow({
+            title: _("Clear copied vault secrets from clipboard"),
+            subtitle: _("Automatically remove a value copied from the password vault from the clipboard after a short delay — only when it still matches the copied value")
+        });
+
+        this.field_vault_clear_clipboard_timeout = new Adw.SpinRow({
+            title: _("Clipboard clear delay (seconds)"),
+            adjustment: new Gtk.Adjustment({
+                lower: 5,
+                upper: 300,
+                step_increment: 5
+            })
+        });
+
+        this.field_vault_clear_clipboard.connect('notify::active', (widget) => {
+            this.field_vault_clear_clipboard_timeout.set_sensitive(widget.active);
+        });
+
         this.ui =  new Adw.PreferencesGroup({ title: _('UI') });
         this.behavior = new Adw.PreferencesGroup({title: _('Behavior')});
         this.exclusion = new Adw.PreferencesGroup({ title: _('Exclusion') });
@@ -351,6 +369,8 @@ class Settings {
         this.password_vault.add(this.field_vault_password_request);
         this.password_vault.add(this.field_vault_reset_search);
         this.password_vault.add(this.field_vault_copy_to_history);
+        this.password_vault.add(this.field_vault_clear_clipboard);
+        this.password_vault.add(this.field_vault_clear_clipboard_timeout);
 
         this.ui.add(this.field_preview_size);
         this.ui.add(this.field_confirm_clear_toggle);
@@ -448,6 +468,8 @@ class Settings {
         this.schema.bind(PrefsFields.VAULT_HIDDEN_EDGE_WARNING, this.field_vault_hidden_edge_warning, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_ENABLED, this.field_vault_enabled, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_COPY_TO_HISTORY, this.field_vault_copy_to_history, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_CLEAR_CLIPBOARD, this.field_vault_clear_clipboard, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_CLEAR_CLIPBOARD_TIMEOUT, this.field_vault_clear_clipboard_timeout, 'value', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_RESET_SEARCH_ON_CLOSE, this.field_vault_reset_search, 'active', Gio.SettingsBindFlags.DEFAULT);
 
         // vault-password-request is a free-form string; map it to the combo index.
@@ -466,6 +488,7 @@ class Settings {
         });
 
         this.field_clear_history_interval.set_sensitive(this.field_clear_history_on_interval.active);
+        this.field_vault_clear_clipboard_timeout.set_sensitive(this.field_vault_clear_clipboard.active);
         this.#fetchExludedAppsList();
     }
 

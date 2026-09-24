@@ -68,6 +68,13 @@ Pinned (favorite) text items can be **protected** with a single click (`Mark as 
 > visible clipboard list. That list is stored in plain text, so **this is
 > insecure** — keep it off unless you fully understand the risk. Default: off.
 
+> 🧹 **Auto-clear after vault copy (default: on, 20 s)** — a secret copied from
+> the vault is wiped from the system clipboard after a short delay, *provided
+> the clipboard still holds exactly that value* (content you copied in the
+> meantime is never touched). This matches the behavior of KeePassXC /
+> Bitwarden and closes the "password lingers in the clipboard" vector. Both the
+> delay and the feature itself are configurable in Settings → Password Vault.
+
 ### 🏷️ Flexible service records
 - Besides the standard **login** and **password**, each service supports **arbitrary custom fields** (e.g. 2FA code, PIN, recovery key).
 - Each custom field can be **hidden** (shown as `••••••••`, toggleable with one click).
@@ -351,6 +358,8 @@ the original extension might add later):
 | `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP archive |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
+| `cwp-vault-clear-clipboard` | boolean | `true` | Automatically clear the clipboard a short time after a vault copy — but *only* while it still holds exactly the copied value, so anything you copy afterwards is left alone |
+| `cwp-vault-clear-clipboard-timeout` | integer (s) | `20` | How many seconds a value copied from the vault stays in the clipboard before the auto-clear removes it (5–300) |
 | `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
 | `cwp-vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
 | `cwp-vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |

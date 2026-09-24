@@ -48,6 +48,8 @@ export const PrefsFields = {
     PASSWORD_VAULT_PATH             : 'cwp-password-vault-path',
     VAULT_ENABLED                   : 'cwp-vault-enabled',
     VAULT_COPY_TO_HISTORY           : 'cwp-vault-copy-to-history',
+    VAULT_CLEAR_CLIPBOARD           : 'cwp-vault-clear-clipboard',
+    VAULT_CLEAR_CLIPBOARD_TIMEOUT   : 'cwp-vault-clear-clipboard-timeout',
     VAULT_PIN_RECENT                : 'cwp-vault-pin-recent',
     VAULT_HIDE_ALL_CATEGORY         : 'cwp-vault-hide-all-category',
     VAULT_HIDDEN_EDGE_WARNING       : 'cwp-vault-hidden-edge-warning',

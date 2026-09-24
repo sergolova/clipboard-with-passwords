@@ -183,6 +183,17 @@
       <default>false</default>
       <summary>Add everything copied from the vault to the visible clipboard history. WARNING: this stores passwords and logins in the plain-text clipboard list, which is insecure. Keep it off unless you understand the risk.</summary>
     </key>
+    <key name="cwp-vault-clear-clipboard" type="b">
+      <default>true</default>
+      <summary>Clear the clipboard after copying a secret from the password vault</summary>
+      <description>After copying a password or other secret from the vault, the clipboard is cleared after the configured delay — but only if it still contains exactly the copied value, so anything the user copied in the meantime is left untouched.</description>
+    </key>
+    <key name="cwp-vault-clear-clipboard-timeout" type="i">
+      <default>20</default>
+      <summary>Seconds to wait before clearing a copied vault secret from the clipboard</summary>
+      <description>How long a value copied from the password vault stays in the system clipboard before it is cleared automatically (only when it still matches the copied value).</description>
+      <range min="5" max="300"/>
+    </key>
     <key name="cwp-toggle-password-vault" type="as">
       <default>[]</default>
       <summary>Toggle password vault hotkey</summary>
