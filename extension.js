@@ -19,6 +19,7 @@ import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields} from './constants.js';
+import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
 import {PasswordVaultManager} from './passwordVault.js';
@@ -119,7 +120,6 @@ const ClipboardIndicator = GObject.registerClass({
     GTypeName: 'ClipboardIndicator'
 }, class ClipboardIndicator extends PanelMenu.Button {
     #refreshInProgress = false;
-    #_imagePreviewOverlay = null;
 
     destroy() {
         this._destroyed = true;
@@ -186,6 +186,7 @@ const ClipboardIndicator = GObject.registerClass({
         this._destroyed = false;
         this.registry = new Registry(extension);
         this.urlMetadataManager = new UrlMetadataManager(this.registry.REGISTRY_DIR);
+        this.imagePreview = new ImagePreviewOverlay({registry: this.registry});
 
         let vaultPath = '~/.config/clipboard-indicator/passwords.zip';
         try {
@@ -1194,12 +1195,21 @@ const ClipboardIndicator = GObject.registerClass({
                     break;
                 case Clutter.KEY_e:
                     if (entry.isText() && !entry.isURIList() && !entry.isMultiline()) {
-                        this.#showEditDialog(menuItem, true);
+                        showEditDialog(menuItem, {
+                            reopenOnClose: true,
+                            closeMenu: () => this.menu.close(),
+                            onReopen: () => this._reopenMenuAfterDialog(menuItem),
+                            onSave: () => this._saveEditedItem(menuItem),
+                        });
                         return Clutter.EVENT_STOP;
                     }
                     break;
                 case Clutter.KEY_t:
-                    this.#showTagDialog(menuItem, true);
+                    showTagDialog(menuItem, {
+                        reopenOnClose: true,
+                        onReopen: () => this._reopenMenuAfterDialog(menuItem),
+                        onSaved: () => this._updateCache(),
+                    });
                     return Clutter.EVENT_STOP;
                 case Clutter.KEY_KP_Enter:
                 case Clutter.KEY_Return:
@@ -1268,7 +1278,9 @@ const ClipboardIndicator = GObject.registerClass({
                 x_expand: false,
                 y_expand: true,
             });
-            menuItem.editBtn.connect('clicked', () => this.#showEditDialog(menuItem));
+            menuItem.editBtn.connect('clicked', () => showEditDialog(menuItem, {
+                onSave: () => this._saveEditedItem(menuItem),
+            }));
             menuItem.actor.add_child(menuItem.editBtn);
         }
 
@@ -1359,7 +1371,9 @@ const ClipboardIndicator = GObject.registerClass({
             x_expand: false,
             y_expand: true,
         });
-        menuItem.tagBtn.connect('clicked', () => this.#showTagDialog(menuItem));
+        menuItem.tagBtn.connect('clicked', () => showTagDialog(menuItem, {
+            onSaved: () => this._updateCache(),
+        }));
         menuItem.actor.add_child(menuItem.tagBtn);
 
         // Delete button
@@ -2380,304 +2394,31 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     #showImagePreview(entry, onClose = null) {
-        this.#closeImagePreview();
         this.menu.close();
-
-        const monitor = Main.layoutManager.currentMonitor;
-
-        const overlay = new St.Widget({
-            reactive: true,
-            can_focus: true,
-            x: monitor.x,
-            y: monitor.y,
-            width: monitor.width,
-            height: monitor.height,
-            style: 'background-color: rgba(0, 0, 0, 0.75);',
-        });
-
-        this.#_imagePreviewOverlay = overlay;
-        global.stage.add_child(overlay);
-        overlay.grab_key_focus();
-
-        const close = () => {
-            this.#closeImagePreview();
-            if (onClose) onClose();
-        };
-
-        overlay._previewClickId = overlay.connect('button-press-event', () => {
-            close();
-            return Clutter.EVENT_STOP;
-        });
-
-        overlay._previewKeyId = overlay.connect('key-press-event', (_actor, event) => {
-            if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                close();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        const maxW = Math.floor(monitor.width * 0.5);
-        const maxH = Math.floor(monitor.height * 0.4);
-
-        const bin = new St.Bin({
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        bin.add_constraint(new Clutter.AlignConstraint({
-            source: overlay,
-            align_axis: Clutter.AlignAxis.X_AXIS,
-            factor: 0.5,
-        }));
-        bin.add_constraint(new Clutter.AlignConstraint({
-            source: overlay,
-            align_axis: Clutter.AlignAxis.Y_AXIS,
-            factor: 0.5,
-        }));
-        overlay.add_child(bin);
-
-        this.registry.getEntryAsTexture(entry).then(actor => {
-            if (this.#_imagePreviewOverlay !== overlay) return;
-            if (!actor) return;
-
-            let contentHandlerId = actor.connect('notify::content', () => {
-                const [, natW] = actor.get_preferred_width(-1);
-                const [, natH] = actor.get_preferred_height(-1);
-
-                if (natW > 0 && natH > 0) {
-                    actor.disconnect(contentHandlerId);
-                    contentHandlerId = null;
-                    const scale = Math.min(1, maxW / natW, maxH / natH);
-                    bin.set_size(Math.round(natW * scale), Math.round(natH * scale));
-                }
-            });
-
-            actor.connect('destroy', () => {
-                if (contentHandlerId) {
-                    actor.disconnect(contentHandlerId);
-                    contentHandlerId = null;
-                }
-            });
-
-            bin.set_child(actor);
-        }).catch(e => {
-            console.error('Clipboard Indicator: failed to load image preview');
-            console.error(e);
-        });
+        this.imagePreview.show(entry, onClose);
     }
 
-    #showTagDialog(menuItem, reopenOnClose = false) {
-        const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
-        dialog.contentLayout.add_style_class_name(themeClass());
-
-        const onDialogClose = () => {
-            if (reopenOnClose) {
-                this._focusItemOnOpen = menuItem;
-                this.menu.open();
-            }
-        };
-
-        const textEntry = new St.Entry({
-            text: menuItem.entry.getTag() || '',
-            hint_text: _('Enter tag…'),
-            can_focus: true,
-            x_expand: true,
-            style: 'min-width: 300px;',
-        });
-        // Non-empty unfocused texts push "clutter_input_focus_is_focused"
-        // input-focus criticals on their first layout: an editable, unfocused
-        // Clutter.Text asserts inside its cursor-location/surrounding updates.
-        // Keep the field non-editable until first user interaction - once the
-        // text holds key focus the input method is attached and the assertions
-        // can't fire.
-        textEntry.clutter_text.editable = false;
-        textEntry.clutter_text.connect('button-press-event', () => {
-            textEntry.clutter_text.editable = true;
-        });
-        textEntry.clutter_text.connect('key-press-event', () => {
-            textEntry.clutter_text.editable = true;
-        });
-
-        dialog.contentLayout.add_child(textEntry);
-
-        dialog.addButton({
-            label: _('Discard'),
-            action: () => {
-                dialog.close();
-                onDialogClose();
-            },
-            key: Clutter.KEY_Escape,
-        });
-
-        dialog.addButton({
-            label: _('Save'),
-            action: () => {
-                const tag = textEntry.get_text().trim() || null;
-                menuItem.entry.setTag(tag);
-                this._updateTagLabel(menuItem);
-                this._updateCache();
-                dialog.close();
-                onDialogClose();
-            },
-            default: true,
-        });
-
-        dialog.open();
-        textEntry.grab_key_focus();
+    // Reopen the indicator menu after a dialog closes, with focus back on the
+    // originating item (used by the keyboard shortcuts that open the tag/edit
+    // dialogs without closing the menu).
+    _reopenMenuAfterDialog(menuItem) {
+        this._focusItemOnOpen = menuItem;
+        this.menu.open();
     }
 
-    _updateTagLabel(menuItem) {
-        if (menuItem.tagLabel) {
-            menuItem.actor.remove_child(menuItem.tagLabel);
-            menuItem.tagLabel.destroy();
-            menuItem.tagLabel = null;
-        }
-
-        const tag = menuItem.entry.getTag();
-        if (tag) {
-            menuItem.tagLabel = new St.Label({
-                text: tag,
-                style_class: 'ci-tag-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            // Keep the tag to the RIGHT of the content: hidden-label items
-            // (multiline/URL/file/color) put the actual content in a box, so
-            // inserting above the (hidden) label would push the tag far left.
-            // Placing it before the actions spacer keeps [content, tag, spacer].
-            if (menuItem.actionsSpacer && menuItem.actor.contains(menuItem.actionsSpacer)) {
-                menuItem.actor.insert_child_below(menuItem.tagLabel, menuItem.actionsSpacer);
-            } else {
-                menuItem.actor.insert_child_above(menuItem.tagLabel, menuItem.label);
-            }
-        }
-    }
-
-    // Build a Clutter/Cogl color for the edit dialog from a CSS hex string
-    // and a 0..1 alpha. Clutter.Text color properties are typed ClutterColor
-    // on GNOME ≤46 (Clutter.Color, GJS boxed wrapper) and CoglColor on 47+
-    // (Clutter.Color was merged into Cogl.Color upstream). Passing a Cogl.Color
-    // on ≤46 throws «Object is of type Cogl.Color - cannot convert to
-    // ClutterColor», so pick the exact wrapper the current runtime expects.
-    #buildEditorColor(hex, alpha = 1.0) {
-        if (typeof Clutter.Color === 'function') {
-            const aByte = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
-                .toString(16).padStart(2, '0');
-            const spec = `${(hex.startsWith('#') ? hex : `#${hex}`).slice(0, 7)}${aByte}`;
-            const [ok, color] = Clutter.Color.from_string(spec);
-            if (ok) return color;
-        }
-        const h = hex.replace('#', '');
-        const color = new Cogl.Color();
-        color.init_from_4f(
-            parseInt(h.slice(0, 2), 16) / 255,
-            parseInt(h.slice(2, 4), 16) / 255,
-            parseInt(h.slice(4, 6), 16) / 255,
-            alpha);
-        return color;
-    }
-
-    #showEditDialog(menuItem, reopenOnClose = false) {
-        const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
-        dialog.contentLayout.add_style_class_name(themeClass());
-
-        const onDialogClose = () => {
-            if (reopenOnClose) {
-                this._focusItemOnOpen = menuItem;
-                this.menu.open();
-            }
-        };
-
-        const scrollView = new St.ScrollView({
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
-            x_expand: true,
-            y_expand: false,
-            style: 'min-width: 400px; min-height: 100px; max-height: 400px;',
-        });
-
-        const clutterText = new Clutter.Text({
-            text: menuItem.entry.getStringValue(),
-            // An editable, unfocused Clutter.Text pushes "clutter_input_focus_is_focused"
-            // input-focus criticals whenever its text offsets change during
-            // allocation. Start non-editable and only enable editing once the
-            // user actually interacts with the text - by then the input method
-            // is attached and the assertions can't fire.
-            editable: false,
-            reactive: true,
-            single_line_mode: false,
-            activatable: false,
-            line_wrap: true,
-
-        });
-        clutterText.connect('button-press-event', () => {
-            clutterText.editable = true;
-        });
-        clutterText.connect('key-press-event', () => {
-            clutterText.editable = true;
-        });
-
-        // Text color must follow the active theme — hardcoding white makes the
-        // dialog unreadable on light shells. Clutter.Text:color is a
-        // ClutterColor (Clutter.Color) on GNOME ≤46 and a CoglColor
-        // (Cogl.Color) on 47+, so colors are built via the type-appropriate
-        // API (#buildEditorColor handles both).
-        clutterText.color = this.#buildEditorColor(themeColors().text);
-        clutterText.selection_color = this.#buildEditorColor('#6396ff', 0.71);
-        clutterText.selected_text_color = this.#buildEditorColor('#ffffff');
-
-        const textBox = new St.BoxLayout({
-            style_class: 'ci-edit-textbox',
-            x_expand: true,
-            y_expand: true,
-            vertical: true,
-        });
-
-        textBox.add_child(clutterText);
-
-        scrollView.add_child(textBox);
-        dialog.contentLayout.add_child(scrollView);
-
-        dialog.addButton({
-            label: _('Discard'),
-            action: () => {
-                dialog.close();
-                onDialogClose();
-            },
-            key: Clutter.KEY_Escape,
-        });
-
-        dialog.addButton({
-            label: _('Save'),
-            action: () => {
-                const newText = clutterText.get_text();
-                menuItem.entry.setText(newText);
-                menuItem.clipContents = newText;
-                this._setEntryLabel(menuItem);
-                this._updateCache();
-                if (menuItem.currentlySelected)
-                    this.#updateClipboard(menuItem.entry);
-                dialog.close();
-                onDialogClose();
-            },
-            default: true,
-        });
-
-        if (reopenOnClose) this.menu.close();
-        dialog.open();
-        clutterText.grab_key_focus();
+    // Runs after the edit dialog saved: entry.setText()/clipContents were
+    // already applied by the dialog itself, so only the label, cache and
+    // (when the edited item is the currently selected clipboard) the live
+    // clipboard need a refresh.
+    _saveEditedItem(menuItem) {
+        this._setEntryLabel(menuItem);
+        this._updateCache();
+        if (menuItem.currentlySelected)
+            this.#updateClipboard(menuItem.entry);
     }
 
     #closeImagePreview() {
-        if (!this.#_imagePreviewOverlay) return;
-
-        const overlay = this.#_imagePreviewOverlay;
-        this.#_imagePreviewOverlay = null;
-
-        if (overlay._previewClickId) overlay.disconnect(overlay._previewClickId);
-        if (overlay._previewKeyId) overlay.disconnect(overlay._previewKeyId);
-
-        if (overlay.get_parent()) global.stage.remove_child(overlay);
-        overlay.destroy();
+        this.imagePreview.close();
     }
 
     #clearTimeouts() {
