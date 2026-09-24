@@ -825,7 +825,9 @@ const ClipboardIndicator = GObject.registerClass({
                 box.add_child(summaryLabel);
 
                 // Line 2: file names — dedupe repeated URIs, show at most 5,
-                // truncate to 80 chars, ellipsize as a second guard.
+                // truncate with the same MAX_ENTRY_LENGTH as every other
+                // preview («Preview Size (characters)»), ellipsize as a
+                // display-level guard.
                 const maxShown = 5;
                 let shown = display.fileNames.filter((f, i) =>
                     f && display.fileNames.indexOf(f) === i).slice(0, maxShown);
@@ -834,12 +836,8 @@ const ClipboardIndicator = GObject.registerClass({
                 if (display.fileNames.length > maxShown) {
                     fileText += ', …';
                 }
-                if ([...fileText].length > 80) {
-                    const chars = [...fileText];
-                    fileText = chars.slice(0, 77).join('') + '…';
-                }
                 const fileNamesLabel = new St.Label({
-                    text: fileText,
+                    text: this._truncate(fileText, MAX_ENTRY_LENGTH),
                     style_class: 'clipboard-second-line',
                     x_expand: true
                 });
