@@ -1271,12 +1271,28 @@ const ClipboardIndicator = GObject.registerClass({
             // events keep reaching the menu). Clicking still opens the
             // interactive preview (also reachable via keyboard 'h'). Hover is
             // controlled by the PREVIEW_ON_HOVER setting (default on).
-            menuItem.imagePreviewBtn.connect('clicked', () => this.#showImagePreview(entry));
+            // Showing is delayed by 200 ms so a quick pass of the pointer
+            // cannot flash the preview; leave and click cancel the pending
+            // timer, and at fire time it is additionally guarded by the menu
+            // still being open and the button still attached.
+            menuItem.imagePreviewBtn.connect('clicked', () => {
+                this.#cancelHoverPreview(menuItem);
+                this.#showImagePreview(entry);
+            });
             menuItem.imagePreviewBtn.connect('enter-event', () => {
-                if (PREVIEW_ON_HOVER)
-                    this.imagePreview.show(entry, {interactive: false});
+                this.#cancelHoverPreview(menuItem);
+                if (PREVIEW_ON_HOVER) {
+                    menuItem.imagePreviewBtn._cwpHoverPreviewId = setTimeout(() => {
+                        menuItem.imagePreviewBtn._cwpHoverPreviewId = 0;
+                        if (this._destroyed || !this.menu.isOpen ||
+                            !menuItem.imagePreviewBtn.get_parent())
+                            return;
+                        this.imagePreview.show(entry, {interactive: false});
+                    }, 200);
+                }
             });
             menuItem.imagePreviewBtn.connect('leave-event', () => {
+                this.#cancelHoverPreview(menuItem);
                 this.imagePreview.close();
             });
             menuItem.actor.add_child(menuItem.imagePreviewBtn);
@@ -2366,6 +2382,17 @@ const ClipboardIndicator = GObject.registerClass({
     #showImagePreview(entry, onClose = null) {
         this.menu.close();
         this.imagePreview.show(entry, {interactive: true, onClose});
+    }
+
+    // Cancel a pending hover-preview timer of a menu item (if any). It may be
+    // pending when the pointer left the button, the item was clicked before
+    // the 200 ms delay elapsed, or the menu closed meanwhile.
+    #cancelHoverPreview(menuItem) {
+        const button = menuItem?.imagePreviewBtn;
+        if (button && button._cwpHoverPreviewId) {
+            clearTimeout(button._cwpHoverPreviewId);
+            button._cwpHoverPreviewId = 0;
+        }
     }
 
     // Reopen the indicator menu after a dialog closes, with focus back on the
