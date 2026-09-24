@@ -35,7 +35,9 @@ export class Registry {
             else if (entry.isImage()) {
                 const filename = this.getEntryFilename(entry);
                 item.contents = filename;
-                this.writeEntryFile(entry);
+                this.writeEntryFile(entry).catch(e => {
+                    logError('Clipboard Indicator: failed to cache image entry', e);
+                });
             }
 
             if (entry.getTag()) item.tag = entry.getTag();
@@ -115,45 +117,94 @@ export class Registry {
         }
     }
 
-    #entryFileExists (entry) {
+    // A cache file exists from the moment replace_async starts (truncated to 0),
+    // so mere existence is not enough: a file mid-write (or left empty by a
+    // failed write) must be rewritten, not read. Valid images are never 0 bytes.
+    #entryFileComplete (entry) {
         const filename = this.getEntryFilename(entry);
-        return GLib.file_test(filename, FileTest.EXISTS);
+        if (!GLib.file_test(filename, FileTest.EXISTS))
+            return false;
+        try {
+            const file = Gio.file_new_for_path(filename);
+            const info = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null);
+            return !!info && info.get_size() > 0;
+        } catch (e) {
+            return false;
+        }
     }
 
-    async getEntryAsTexture (entry) {
+    async getEntryAsTexture (entry, { width = -1, height = -1 } = {}) {
         if (entry.isImage() === false) return null;
 
-        if (this.#entryFileExists(entry) === false) {
-            await this.writeEntryFile(entry);
-        }
+        try {
+            // The capture path awaits writeEntryFile() before exposing the entry
+            // to the menu, so the file is normally complete here; this check also
+            // rewrites a leftover from a failed write (empty file).
+            if (this.#entryFileComplete(entry) === false) {
+                await this.writeEntryFile(entry);
+            }
 
-        const file = Gio.file_new_for_path(this.getEntryFilename(entry));
-        const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        return St.TextureCache.get_default().load_file_async(file, -1, -1, scaleFactor, 1.0);
+            const file = Gio.file_new_for_path(this.getEntryFilename(entry));
+            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+            // width/height ≤ 0 means natural size. Small previews (e.g. the
+            // 1em topbar thumb) pass a size hint so the texture cache does not
+            // decode + upload a full 4K screenshot for a 24 px box.
+            return St.TextureCache.get_default().load_file_async(file, width, height, scaleFactor, 1.0);
+        } catch (e) {
+            // Real failure: render the item as an empty preview box; the
+            // in-memory entry still pastes fine.
+            logError('Clipboard Indicator: failed to load image texture', e);
+            return null;
+        }
     }
 
     getEntryFilename (entry) {
-        return `${this.REGISTRY_DIR}/${entry.asBytes().hash()}`;
+        // Lazily-restored images already know their cache path; freshly copied
+        // ones derive it from the payload hash.
+        if (entry.storedFilename)
+            return entry.storedFilename;
+        if (!entry.cachedFilename) {
+            // Hash once and reuse: the capture path derives the name for the
+            // write, then again for the menu-item and topbar textures and on
+            // every registry save — each call used to run a full-content pass
+            // over the (multi-MB) image on the main loop.
+            entry.cachedFilename = `${this.REGISTRY_DIR}/${entry.asBytes().hash()}`;
+        }
+        return entry.cachedFilename;
     }
 
-    async writeEntryFile (entry) {
-        if (this.#entryFileExists(entry)) return;
+    async writeEntryFile (entry, rawBytes = null) {
+        if (this.#entryFileComplete(entry)) return;
 
+        // The capture path passes the clipboard's own GLib.Bytes straight
+        // through, so a multi-MB payload isn't re-wrapped (and re-copied) here.
+        const bytes = rawBytes ?? await entry.asBytesAsync();
         let file = Gio.file_new_for_path(this.getEntryFilename(entry));
 
-        return new Promise(resolve => {
+        // Capture awaits this write before the entry reaches the menu
+        // (extension.js #getClipboardContent), so the first reader — the item
+        // preview via getEntryAsTexture() — always finds a fully written file.
+        // Failures reject here so the capture path can log and still show the
+        // entry (paste works from the in-memory payload).
+        return new Promise((resolve, reject) => {
             file.replace_async(null, false, Gio.FileCreateFlags.NONE,
                                GLib.PRIORITY_DEFAULT, null, (obj, res) => {
+                try {
+                    let stream = obj.replace_finish(res);
 
-                let stream = obj.replace_finish(res);
-
-                stream.write_bytes_async(entry.asBytes(), GLib.PRIORITY_DEFAULT,
-                                         null, (w_obj, w_res) => {
-
-                    w_obj.write_bytes_finish(w_res);
-                    stream.close(null);
-                    resolve();
-                });
+                    stream.write_bytes_async(bytes, GLib.PRIORITY_DEFAULT,
+                                             null, (w_obj, w_res) => {
+                        try {
+                            w_obj.write_bytes_finish(w_res);
+                            stream.close(null);
+                            resolve();
+                        } catch (e) {
+                            reject(e);
+                        }
+                    });
+                } catch (e) {
+                    reject(e);
+                }
             });
         });
     }
@@ -191,6 +242,15 @@ export class Registry {
 export class ClipboardEntry {
     #mimetype;
     #bytes;
+    // Cache-file path for lazily-restored image entries (set by fromJSON; null
+    // for in-memory entries). Lets getEntryFilename()/getStringValue() work
+    // without touching the payload.
+    #storedFilename = null;
+    // Hash-derived cache path, computed once and reused by getEntryFilename():
+    // recomputing asBytes().hash() over a multi-MB image on every call stalls
+    // the shell main loop in the capture path (write + menu item preview +
+    // registry save each recomputed it).
+    #cachedFilename = null;
     #favorite;
 
     static #decode (contents) {
@@ -206,7 +266,8 @@ export class ClipboardEntry {
     static async fromJSON (jsonEntry) {
         const mimetype = jsonEntry.mimetype || 'text/plain;charset=utf-8';
         const favorite = jsonEntry.favorite;
-        let bytes;
+        let bytes = null;
+        let storedFilename = null;
 
         if (ClipboardEntry.__isText(mimetype)) {
             bytes = new TextEncoder().encode(jsonEntry.contents);
@@ -215,25 +276,17 @@ export class ClipboardEntry {
             const filename = jsonEntry.contents;
             if (!GLib.file_test(filename, FileTest.EXISTS)) return null;
 
-            let file = Gio.file_new_for_path(filename);
-
-            // Load the cached file synchronously. The previous implementation
-            // used query_info_async() + load_contents_async() inside a
-            // Promise.all(); when many image entries were restored at startup
-            // (including multi-MB screenshots), those async callbacks could be
-            // dispatched while gjs was sweeping the heap during a major GC.
-            // The shell then blocks the JS callback ("Attempting to run a JS
-            // callback during garbage collection ... AsyncReadyCallback()"),
-            // so the promises never resolve and the shell hangs forever at
-            // startup. These are all small local cache files, so blocking is
-            // cheap (a few ms each).
-            const [, contents] = file.load_contents(null);
-            if (!contents)
-                return null;
-            bytes = contents;
+            // Lazy image restore (EGO-X-004): do not read the payload at
+            // startup. Loading every cached image synchronously would stall the
+            // shell main loop (and the previous async variant could hang the
+            // shell when JS callbacks fired during a major GC sweep). The
+            // preview texture is rendered straight from the cache file by
+            // getEntryAsTexture(); the bytes load on demand via asBytesAsync()
+            // (paste/copy back, cache-file rewrite).
+            storedFilename = filename;
         }
 
-        const entry = new ClipboardEntry(mimetype, bytes, favorite);
+        const entry = new ClipboardEntry(mimetype, bytes, favorite, storedFilename);
         if (jsonEntry.tag) entry.setTag(jsonEntry.tag);
         // Legacy registry caches stored this flag as `password`; new caches use
         // `protected`. Accept both so already-protected items stay masked after
@@ -242,10 +295,11 @@ export class ClipboardEntry {
         return entry;
     }
 
-    constructor (mimetype, bytes, favorite) {
+    constructor (mimetype, bytes, favorite, storedFilename = null) {
         this.#mimetype = mimetype;
         this.#bytes = bytes;
         this.#favorite = favorite;
+        this.#storedFilename = storedFilename;
     }
 
     #encode () {
@@ -260,7 +314,10 @@ export class ClipboardEntry {
 
     getStringValue () {
         if (this.isImage()) {
-            return `[Image ${this.asBytes().hash()}]`;
+            const hash = this.#storedFilename
+                ? this.#storedFilename.slice(this.#storedFilename.lastIndexOf('/') + 1)
+                : this.asBytes().hash();
+            return `[Image ${hash}]`;
         }
         return new TextDecoder().decode(this.#bytes);
     }
@@ -477,7 +534,44 @@ export class ClipboardEntry {
         this.#tag = tag || null;
     }
 
+    get storedFilename () {
+        return this.#storedFilename;
+    }
+
+    get cachedFilename () {
+        return this.#cachedFilename;
+    }
+
+    set cachedFilename (val) {
+        this.#cachedFilename = val;
+    }
+
+    // Async payload accessor: text entries (and freshly copied images) already
+    // hold their bytes in memory; lazily-restored images fetch the payload from
+    // the cache file on demand (EGO-X-004 — no synchronous file IO).
+    async asBytesAsync () {
+        if (this.#bytes)
+            return GLib.Bytes.new(this.#bytes);
+
+        const file = Gio.file_new_for_path(this.#storedFilename);
+        const [success, contents] = await new Promise((resolve, reject) => {
+            file.load_contents_async(null, (src, res) => {
+                try {
+                    resolve(src.load_contents_finish(res));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+        if (!success || !contents)
+            throw new Error(`clipboard image cache file missing: ${this.#storedFilename}`);
+        this.#bytes = contents;
+        return GLib.Bytes.new(contents);
+    }
+
     asBytes () {
+        if (!this.#bytes)
+            throw new Error('entry payload not loaded; use asBytesAsync()');
         return GLib.Bytes.new(this.#bytes);
     }
 

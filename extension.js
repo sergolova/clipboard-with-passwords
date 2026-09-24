@@ -327,6 +327,7 @@ const ClipboardIndicator = GObject.registerClass({
             square = true,
             maxWidth = 150,
             onDims = null,
+            sizeHint = null,
         } = options;
         // Gap between the image and the 1px CSS border of the preview box (both
         // square and rectangle modes).
@@ -336,7 +337,10 @@ const ClipboardIndicator = GObject.registerClass({
             clip_to_allocation: true
         });
 
-        this.registry.getEntryAsTexture(entry).then(actor => {
+        this.registry.getEntryAsTexture(
+            entry,
+            sizeHint ? { width: sizeHint, height: sizeHint } : {}
+        ).then(actor => {
             if (!actor || this._destroyed || !box.get_parent())
                 return;
 
@@ -469,7 +473,9 @@ const ClipboardIndicator = GObject.registerClass({
             } else if (entry.isImage()) {
                 this._buttonText.set_text('');
                 this._buttonImgPreview.destroy_all_children();
-                const preview = this.#createAspectImagePreview(entry, 'clipboard-indicator-img-preview');
+                const preview = this.#createAspectImagePreview(entry, 'clipboard-indicator-img-preview', {
+                    sizeHint: 96
+                });
                 preview.y_align = Clutter.ActorAlign.CENTER;
 
                 // icon only renders properly in setTimeout for some arcane reason
@@ -2620,9 +2626,14 @@ const ClipboardIndicator = GObject.registerClass({
         this.#updateIndicatorContent(null);
     }
 
-    #updateClipboard(entry) {
-        this.extension.clipboard.set_content(CLIPBOARD_TYPE, entry.mimetype(), entry.asBytes());
-        this.#updateIndicatorContent(entry);
+    async #updateClipboard(entry) {
+        try {
+            const bytes = await entry.asBytesAsync();
+            this.extension.clipboard.set_content(CLIPBOARD_TYPE, entry.mimetype(), bytes);
+            this.#updateIndicatorContent(entry);
+        } catch (e) {
+            logError('Clipboard Indicator: failed to restore entry to clipboard', e);
+        }
     }
 
     async #getClipboardContent() {
@@ -2656,7 +2667,7 @@ const ClipboardIndicator = GObject.registerClass({
                 }, 200);
 
                 try {
-                    this.extension.clipboard.get_content(CLIPBOARD_TYPE, type, (clipBoard, bytes) => {
+                    this.extension.clipboard.get_content(CLIPBOARD_TYPE, type, async (clipBoard, bytes) => {
                         if (resolved) return;
                         resolved = true;
                         clearTimeout(timeoutId);
@@ -2690,7 +2701,19 @@ const ClipboardIndicator = GObject.registerClass({
                             }
 
                             if (CACHE_IMAGES && entry.isImage()) {
-                                this.registry.writeEntryFile(entry);
+                                // Write the cache file to completion BEFORE the
+                                // entry reaches the menu: the item preview reads
+                                // the file via getEntryAsTexture(), and
+                                // replace_async truncates it the moment the write
+                                // starts — reading mid-write yields an empty
+                                // thumbnail (thin white strip). A write failure
+                                // is logged but the entry still resolves (paste
+                                // works from the in-memory payload).
+                                try {
+                                    await this.registry.writeEntryFile(entry, bytes);
+                                } catch (e) {
+                                    logError('Clipboard Indicator: failed to cache image', e);
+                                }
                             }
                             resolve(entry);
                         } catch (err) {
