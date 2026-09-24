@@ -218,8 +218,10 @@ extension in **GNOME Extensions** (or with
 The vault is a standard encrypted ZIP archive that contains a single `data.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
 Keep the archive file (e.g. `storage.zip`) in a **protected location** — do not put it in
-a world-readable directory. Anyone with read access to the file can attempt to crack it,
-and the `.bak` copy next to it contains it too.
+a world-readable directory. The extension hardens permissions automatically: a freshly
+created vault directory gets `0700` (pre-existing directories are left as they are), and
+the archive and its `.bak` are chmod'ed to `0600` after every save, so other local users
+cannot read (and offline-crack) the encrypted vault.
 
 > 🔐 **The master password is never passed on the 7z command line.** The vault
 > hands it to `7z` through the process's **stdin** (and the `-p` switch without a
@@ -249,6 +251,12 @@ Working with the archive manually:
 ```
 
 Each save also keeps a `.bak` copy of the previous archive next to it.
+
+Saves are **atomic**: the archive is first written to a temporary file next to
+it (`storage.zip.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
+renamed over the target with `GLib.rename`. A crash or power loss in the middle
+of a save leaves the previous archive (and its `.bak`) intact — never a
+half-written `storage.zip`.
 
 ### Example `data.json`
 

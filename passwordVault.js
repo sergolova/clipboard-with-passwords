@@ -255,6 +255,9 @@ export class PasswordVaultManager {
             const bakFile = Gio.File.new_for_path(this.zipPath + '.bak');
             try {
                 zipFile.copy(bakFile, Gio.FileCopyFlags.OVERWRITE, null, null);
+                // `copy` creates the .bak with 0644/0664 (umask); the backup
+                // is a full copy of the encrypted vault — tighten it to 0600.
+                bakFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
             } catch (e) {
                 logWarn('Failed to create backup:', e);
             }
@@ -307,17 +310,25 @@ export class PasswordVaultManager {
             throw e;
         }
 
-        if (zipFile.query_exists(null)) {
+        // Write the new archive to a temporary file *next to the destination*
+        // (same directory ⇒ same filesystem), then atomically rename it into
+        // place. If the machine crashes / loses power mid-`7z a`, the previous
+        // archive and its .bak stay intact — unlike the old delete-then-write
+        // flow, which left a window where `this.zipPath` was missing or half
+        // written. A unique name also keeps `7z a` from updating a stale tmp
+        // archive, so the result always contains exactly one member.
+        const tmpArchivePath = this.zipPath + '.tmp-' + Date.now();
+        const tmpArchiveFile = Gio.File.new_for_path(tmpArchivePath);
+        const cleanupTmpArchive = () => {
             try {
-                zipFile.delete(null);
+                tmpArchiveFile.delete(null);
             } catch (e) {
-                cleanupTmp();
-                throw new Error(_('Failed to update the password vault archive.') + '\n' + (e && e.message ? e.message : ''));
             }
-        }
+        };
 
         const archiveBinary = resolveArchiveBinary();
         if (!archiveBinary) {
+            cleanupTmpArchive();
             cleanupTmp();
             throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
@@ -332,13 +343,14 @@ export class PasswordVaultManager {
                 // default ZipCrypto for `-tzip`, which is attackable via
                 // known-plaintext. The archive stays a standard encrypted
                 // ZIP, just encrypted with AES-256.
-                argv: [archiveBinary, 'a', '-tzip', '-mem=AES256', '-p', '-y', this.zipPath, dataJsonPath],
+                argv: [archiveBinary, 'a', '-tzip', '-mem=AES256', '-p', '-y', tmpArchivePath, dataJsonPath],
                 flags: Gio.SubprocessFlags.STDIN_PIPE |
                        Gio.SubprocessFlags.STDOUT_PIPE |
                        Gio.SubprocessFlags.STDERR_PIPE
             });
             proc.init(null);
         } catch (e) {
+            cleanupTmpArchive();
             cleanupTmp();
             throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
         }
@@ -354,11 +366,30 @@ export class PasswordVaultManager {
                         // Same as unlock(): raw stderr goes to the (gated) log
                         // only, never into a user-facing message.
                         if (stderr) logWarn('7z save stderr:', stderr.trim());
+                        cleanupTmpArchive();
+                        reject(new Error(_('Failed to update the password vault archive.')));
+                        return;
+                    }
+                    // `7z a` creates/recreates the archive with 0644/0664
+                    // (umask) — tighten it to 0600 so other local users
+                    // cannot read (and offline-crack) the encrypted vault.
+                    try {
+                        tmpArchiveFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
+                    } catch (chmodErr) {
+                        logWarn('Failed to tighten vault archive permissions:', chmodErr);
+                    }
+                    // Atomic replacement: same directory ⇒ same filesystem,
+                    // so GLib.rename cannot fail with EXDEV. On any other
+                    // failure the previous archive is left untouched.
+                    if (GLib.rename(tmpArchivePath, this.zipPath) < 0) {
+                        cleanupTmpArchive();
+                        logWarn('Failed to atomically replace the vault archive.');
                         reject(new Error(_('Failed to update the password vault archive.')));
                         return;
                     }
                     resolve(true);
                 } catch (e) {
+                    cleanupTmpArchive();
                     reject(e);
                 }
             });
@@ -377,6 +408,14 @@ export class PasswordVaultManager {
         if (!parent.query_exists(null)) {
             try {
                 parent.make_directory_with_parents(null);
+                // A freshly created vault directory is private by default
+                // (0700 instead of 0755). Pre-existing directories are left
+                // untouched — only the files inside are hardened.
+                try {
+                    parent.set_attribute_uint32('unix::mode', 0o700, Gio.FileQueryInfoFlags.NONE, null);
+                } catch (chmodErr) {
+                    logWarn('Failed to tighten vault directory permissions:', chmodErr);
+                }
             } catch (e) {
                 throw new Error(_('Cannot create the password vault directory.') + '\n' + parent.get_path());
             }
