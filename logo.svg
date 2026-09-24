@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#66a1ea"/>
+      <stop offset="1" stop-color="#1a5fb4"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.34" cy="0.20" r="0.95">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="deep" cx="0.74" cy="0.86" r="0.9">
+      <stop offset="0" stop-color="#0b2547" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#0b2547" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3079df"/>
+      <stop offset="1" stop-color="#154f9e"/>
+    </linearGradient>
+    <filter id="bshadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0b2547" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+
+  <!-- tile -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#gloss)"/>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#deep)"/>
+
+  <!-- clipboard board -->
+  <g filter="url(#bshadow)">
+    <rect x="146" y="116" width="220" height="274" rx="28" fill="#ffffff"/>
+  </g>
+
+  <!-- clip bar + hinges -->
+  <rect x="168" y="92" width="176" height="46" rx="23" fill="#c9d8ec"/>
+  <circle cx="196" cy="124" r="10" fill="#9fb6d4"/>
+  <circle cx="316" cy="124" r="10" fill="#9fb6d4"/>
+
+  <!-- padlock shackle -->
+  <path d="M 224 208 V 190 A 32 32 0 1 1 288 190 V 208"
+        fill="none" stroke="#1a5fb4" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- padlock body -->
+  <rect x="206" y="198" width="100" height="134" rx="20" fill="url(#lock)"/>
+
+  <!-- keyhole -->
+  <circle cx="256" cy="256" r="14" fill="#ffffff"/>
+  <path d="M 256 272 C 245 283 244 297 256 308 C 268 297 267 283 256 272 Z" fill="#ffffff"/>
+
+  <!-- note lines -->
+  <rect x="178" y="352" width="156" height="7" rx="3.5" fill="#e0e8f3"/>
+  <rect x="178" y="370" width="156" height="7" rx="3.5" fill="#e0e8f3"/>
+</svg>
