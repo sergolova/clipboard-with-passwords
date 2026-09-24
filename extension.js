@@ -302,11 +302,22 @@ const ClipboardIndicator = GObject.registerClass({
     // The loaded texture stays at its natural size; a fixed-size St.Bin
     // holder (centered via AlignConstraint, same pattern as the full-screen
     // image preview) shows the whole image proportionally scaled.
-    // @param {Function|null} onDims - called once with (width, height) once
-    //   the natural image size is known; reuses the same texture load as
-    //   the thumbnail, so no extra I/O or caching is needed.
-    #createAspectImagePreview(entry, previewClass, onDims = null) {
-        // Gap between the image and the 1px CSS border of the preview box.
+    // Options:
+    //  - square (default true): fit the image into the box's square extent
+    //    (black letterboxing around, CSS background).
+    //  - maxWidth: width cap in rectangle mode (fixed CSS height, width
+    //    follows the fitted image, no letterboxing).
+    //  - onDims {Function|null}: called once with (width, height) once the
+    //    natural image size is known; reuses the same texture load as the
+    //    thumbnail, so no extra I/O or caching is needed.
+    #createAspectImagePreview(entry, previewClass, options = {}) {
+        const {
+            square = true,
+            maxWidth = 150,
+            onDims = null,
+        } = options;
+        // Gap between the image and the 1px CSS border of the preview box (both
+        // square and rectangle modes).
         const PREVIEW_INSET = 2;
         const box = new St.Widget({
             style_class: previewClass,
@@ -370,13 +381,33 @@ const ClipboardIndicator = GObject.registerClass({
                 if (fitted)
                     return;
 
-                const square = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
-                if (natW <= 0 || natH <= 0 || square <= 0)
-                    return;
+                if (square) {
+                    // Square thumbnail: center the fitted image in the box,
+                    // black letterboxing around it (CSS background).
+                    const fit = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
+                    if (natW <= 0 || natH <= 0 || fit <= 0)
+                        return;
 
-                const scale = Math.min(square / natW, square / natH);
-                holder.set_size(Math.max(1, Math.round(natW * scale)),
-                                Math.max(1, Math.round(natH * scale)));
+                    const scale = Math.min(fit / natW, fit / natH);
+                    holder.set_size(Math.max(1, Math.round(natW * scale)),
+                                    Math.max(1, Math.round(natH * scale)));
+                } else {
+                    // Rectangle thumbnail: constant item height (3em from CSS),
+                    // image fitted into maxWidth × that height, inset by
+                    // PREVIEW_INSET so it never touches the 1px border.
+                    const boxH = box.get_height();
+                    if (natW <= 0 || natH <= 0 || boxH <= 0)
+                        return;
+
+                    const fitW = maxWidth - 2 * PREVIEW_INSET;
+                    const fitH = boxH - 2 * PREVIEW_INSET;
+                    const scale = Math.min(fitW / natW, fitH / natH);
+                    const w = Math.max(1, Math.round(natW * scale));
+                    const h = Math.max(1, Math.round(natH * scale));
+                    holder.set_size(w, h);
+                    box.set_size(w + 2 * PREVIEW_INSET, boxH);
+                }
+
                 holder.set_child(actor);
                 fitted = true;
 
@@ -1086,11 +1117,15 @@ const ClipboardIndicator = GObject.registerClass({
             });
             menuItem.imageSizeLabel = sizeLabel;
 
-            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview', (w, h) => {
-                if (sizeLabel.get_parent() !== menuItem.actor)
-                    return;
-                sizeLabel.set_text(`${w} × ${h} · ${imageFormatLabel(entry.mimetype())}`);
-                sizeLabel.show();
+            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview', {
+                square: false,
+                maxWidth: 150,
+                onDims: (w, h) => {
+                    if (sizeLabel.get_parent() !== menuItem.actor)
+                        return;
+                    sizeLabel.set_text(`${w} × ${h} · ${imageFormatLabel(entry.mimetype())}`);
+                    sizeLabel.show();
+                }
             });
             if (menuItem.previewImage) {
                 menuItem.remove_child(menuItem.previewImage);

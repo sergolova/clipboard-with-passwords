@@ -19,7 +19,7 @@ Clipboard entries are detected and visually distinguished by their content type,
 | **File list**       | dragged/copied files show the file names                                              |
 | **Multi-line text** | shows a preview of the non-empty lines with line count                                |
 | **HTML/CSS colors** | predefined color names + hex codes (`#ff5500`,`#f50`) get a real color swatch preview |
-| **Images**          | thumbnails with a preview button                                                      |
+| **Images**          | proportional thumbnails with size & format, full-screen preview on hover         |
 
 <p align="center">
   <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="450"/>
@@ -27,9 +27,20 @@ Clipboard entries are detected and visually distinguished by their content type,
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
 
-Image previews: **hover** over the preview button for a quick full-screen look (auto-dismisses when the pointer leaves). The hover behavior can be turned off in the settings («Preview on hover») — the click/keyboard (`h`) interactive preview always works.
+Image previews: see the dedicated [🖼️ Image previews](#-image-previews) section below.
 
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
+
+### 🖼️ Image previews
+Image items get a **proportional thumbnail** — non-square images are no longer squeezed into a square (that is what the original extension did, visibly distoring the picture):
+
+- The thumbnail lives in a **fixed-height rectangle** (the width follows the image, up to **150px**): wide images fill the full height, tall and panoramic ones are fitted inside proportionally — nothing is cropped, stretched or letterboxed. Rows keep a constant height.
+- Next to the thumbnail the menu shows the image **size and format**, e.g. `1920 × 1080 · jpg` — read from the same texture that renders the thumbnail, so it costs nothing extra.
+- **Hover** over the preview button for a quick **full-screen look** (auto-dismisses when the pointer leaves). The hover behavior can be turned off in the settings («Preview on hover») — the click/keyboard (`h`) interactive preview always works.
+
+<p align="center">
+  <img src="screenshots/image-preview.png" alt="Clipboard menu with proportional image thumbnails and size/format labels" height="300"/>
+</p>
 
 ### 🛡️ Protect pinned items
 Pinned (favorite) text items can be **protected** with a single click (`Mark as protected`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.

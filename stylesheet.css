@@ -77,11 +77,8 @@
 .clipboard-menu-img-preview {
     border:solid 1px white;
     overflow:hidden;
-    width:1.5em;
-    height:1.5em;
     margin:0;
     padding:0;
-    background-color:#000;
 }
 
 .ci-theme-light .clipboard-menu-img-preview {
@@ -149,7 +146,6 @@
 }
 
 .clipboard-type-image .clipboard-menu-img-preview {
-    width: 3em;
     height: 3em;
 }
 
