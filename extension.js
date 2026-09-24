@@ -8,7 +8,6 @@ import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as AnimationUtils from 'resource:///org/gnome/shell/misc/animationUtils.js';
-import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -21,6 +20,7 @@ import {DialogManager} from './confirmDialog.js';
 import {PrefsFields} from './constants.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
+import {NotificationSource} from './notifications.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
 import {PasswordVaultManager} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
@@ -134,7 +134,7 @@ const ClipboardIndicator = GObject.registerClass({
         this.#clearTimeouts();
         this.#closeImagePreview();
         this._removeHistoryLabel();
-        this._destroyNotifSource();
+        this.notifications.destroy();
         this.autoLock.disable();
         this.dialogManager.destroy();
         // Iterate a copy: close() fires 'closed', which splices the dialog
@@ -187,6 +187,10 @@ const ClipboardIndicator = GObject.registerClass({
         this.registry = new Registry(extension);
         this.urlMetadataManager = new UrlMetadataManager(this.registry.REGISTRY_DIR);
         this.imagePreview = new ImagePreviewOverlay({registry: this.registry});
+        this.notifications = new NotificationSource({
+            iconName: INDICATOR_ICON,
+            isPrivateMode: () => PRIVATEMODE,
+        });
 
         let vaultPath = '~/.config/clipboard-indicator/passwords.zip';
         try {
@@ -532,7 +536,7 @@ const ClipboardIndicator = GObject.registerClass({
                     this.extension.clipboard.set_text(CLIPBOARD_TYPE, text);
                 }
                 if (NOTIFY_ON_COPY) {
-                    this._showNotification(_("Copied from vault"));
+                    this.notifications.show(_("Copied from vault"));
                 }
             };
 
@@ -1468,7 +1472,7 @@ const ClipboardIndicator = GObject.registerClass({
             const message = invokedAutomatically
                 ? _("Clipboard history cleared automatically")
                 : _("Clipboard history cleared");
-            this._showNotification(message);
+            this.notifications.show(message);
         }
     }
 
@@ -1640,7 +1644,7 @@ const ClipboardIndicator = GObject.registerClass({
                 this._addEntry(result, true, false);
                 this._removeOldestEntries();
                 if (NOTIFY_ON_COPY) {
-                    this._showNotification(_("Copied to clipboard"), notif => {
+                    this.notifications.show(_("Copied to clipboard"), notif => {
                         notif.addAction(_('Cancel'), this._cancelNotification);
                     });
                 }
@@ -1837,28 +1841,6 @@ const ClipboardIndicator = GObject.registerClass({
         this.menu.close();
     }
 
-    _initNotifSource() {
-        if (!this._notifSource) {
-            this._notifSource = new MessageTray.Source({
-                title: 'Clipboard Indicator',
-                'icon-name': INDICATOR_ICON
-            });
-
-            this._notifSource.connect('destroy', () => {
-                this._notifSource = null;
-            });
-
-            Main.messageTray.add(this._notifSource);
-        }
-    }
-
-    _destroyNotifSource() {
-        if (this._notifSource) {
-            this._notifSource.destroy();
-            this._notifSource = null;
-        }
-    }
-
     _cancelNotification() {
         if (this.clipItemsRadioGroup.length >= 2) {
             let clipSecond = this.clipItemsRadioGroup.length - 2;
@@ -1872,38 +1854,6 @@ const ClipboardIndicator = GObject.registerClass({
         }
         let clipFirst = this.clipItemsRadioGroup.length - 1;
         this._removeEntry(this.clipItemsRadioGroup[clipFirst]);
-    }
-
-    _showNotification(message, transformFn) {
-        const dndOn = () =>
-            !Main.panel.statusArea.dateMenu._indicator._settings.get_boolean(
-                'show-banners',
-            );
-        if (PRIVATEMODE || dndOn()) {
-            return;
-        }
-
-        let notification = null;
-
-        this._initNotifSource();
-
-        if (this._notifSource.count === 0) {
-            notification = new MessageTray.Notification({
-                source: this._notifSource,
-                body: message,
-                'is-transient': true
-            });
-        } else {
-            notification = this._notifSource.notifications[0];
-            notification.body = message;
-            notification.clearActions();
-        }
-
-        if (typeof transformFn === 'function') {
-            transformFn(notification);
-        }
-
-        this._notifSource.addNotification(notification);
     }
 
     _createHistoryLabel() {
@@ -2317,7 +2267,7 @@ const ClipboardIndicator = GObject.registerClass({
                 let index = i + 1;                   //index to be displayed
 
                 if (NOTIFY_ON_CYCLE) {
-                    this._showNotification(index + ' / ' + menuItems.length + ': ' + menuItems[i].entry.getStringValue());
+                    this.notifications.show(index + ' / ' + menuItems.length + ': ' + menuItems[i].entry.getStringValue());
                 }
                 if (MOVE_ITEM_FIRST) {
                     this._selectEntryWithDelay(menuItems[i]);
@@ -2342,7 +2292,7 @@ const ClipboardIndicator = GObject.registerClass({
                 let index = i + 1;                     //index to be displayed
 
                 if (NOTIFY_ON_CYCLE) {
-                    this._showNotification(index + ' / ' + menuItems.length + ': ' + menuItems[i].entry.getStringValue());
+                    this.notifications.show(index + ' / ' + menuItems.length + ': ' + menuItems[i].entry.getStringValue());
                 }
                 if (MOVE_ITEM_FIRST) {
                     this._selectEntryWithDelay(menuItems[i]);
