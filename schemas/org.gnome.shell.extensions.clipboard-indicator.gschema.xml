@@ -4,14 +4,17 @@
     <key name="history-size" type="i">
       <default>15</default>
       <summary>History size</summary>
+      <range min="1" max="10000"/>
     </key>
     <key name="preview-size" type="i">
-      <default>50</default>
+      <default>30</default>
       <summary>Preview size</summary>
+      <range min="10" max="100"/>
     </key>
     <key name="cache-size" type="i">
       <default>5</default>
       <summary>Cache file size</summary>
+      <range min="1" max="1024"/>
     </key>
     <key name="cache-only-favorites" type="b">
       <default>false</default>
@@ -50,12 +53,14 @@
       <summary>Enable keybindings</summary>
     </key>
     <key name="topbar-preview-size" type="i">
-      <default>15</default>
+      <default>10</default>
       <summary>Topbar preview size</summary>
+      <range min="1" max="100"/>
     </key>
     <key name="display-mode" type="i">
-      <default>1</default>
+      <default>0</default>
       <summary>Display mode</summary>
+      <range min="0" max="3"/>
     </key>
     <key name="disable-down-arrow" type="b">
       <default>false</default>
@@ -69,7 +74,7 @@
       <default>false</default>
       <summary>Strip text</summary>
     </key>
-    <key name="strip-line-breaks" type="b">
+    <key name="cwp-strip-line-breaks" type="b">
       <default>false</default>
       <summary>Strip line breaks from text</summary>
     </key>
@@ -161,54 +166,54 @@
       <default>true</default>
       <summary>Show preview button</summary>
     </key>
-    <key name="preview-on-hover" type="b">
+    <key name="cwp-preview-on-hover" type="b">
       <default>true</default>
       <summary>Show image preview on hover</summary>
     </key>
 
-    <key name="password-vault-path" type="s">
+    <key name="cwp-password-vault-path" type="s">
       <default>'~/.config/clipboard-indicator/passwords.zip'</default>
       <summary>Path to encrypted password vault ZIP archive</summary>
     </key>
-    <key name="vault-enabled" type="b">
+    <key name="cwp-vault-enabled" type="b">
       <default>true</default>
       <summary>Enable the built-in password vault (right-click or hotkey opens it)</summary>
     </key>
-    <key name="vault-copy-to-history" type="b">
+    <key name="cwp-vault-copy-to-history" type="b">
       <default>false</default>
       <summary>Add everything copied from the vault to the visible clipboard history. WARNING: this stores passwords and logins in the plain-text clipboard list, which is insecure. Keep it off unless you understand the risk.</summary>
     </key>
-    <key name="toggle-password-vault" type="as">
+    <key name="cwp-toggle-password-vault" type="as">
       <default>[]</default>
       <summary>Toggle password vault hotkey</summary>
     </key>
-    <key name="vault-pin-recent" type="b">
+    <key name="cwp-vault-pin-recent" type="b">
       <default>true</default>
       <summary>Pin the last used service card at the top of the password vault</summary>
     </key>
-    <key name="vault-hide-all-category" type="b">
+    <key name="cwp-vault-hide-all-category" type="b">
       <default>false</default>
       <summary>Hide services when the "All" category is selected until the user types in the search box</summary>
     </key>
-    <key name="vault-hidden-edge-warning" type="b">
+    <key name="cwp-vault-hidden-edge-warning" type="b">
       <default>false</default>
       <summary>Warn about edge characters in hidden vault values</summary>
       <description>Show a warning icon when a hidden password or field starts or ends with a space, line break or non-printable character. Catches invisible paste typos, but the icon also reveals metadata about the secret value to anyone viewing the screen (e.g. during screen sharing). Off by default.</description>
     </key>
-    <key name="vault-password-request" type="s">
+    <key name="cwp-vault-password-request" type="s">
       <default>'session'</default>
       <summary>When the password vault asks for the master password</summary>
       <description>session = ask once per desktop session (auto-lock on screen lock and suspend); every-open = ask every time the vault is opened; after-sleep = keep the unlock, but re-ask only after the system wakes from sleep</description>
     </key>
-    <key name="vault-reset-search-on-close" type="b">
+    <key name="cwp-vault-reset-search-on-close" type="b">
       <default>true</default>
       <summary>Reset the vault search filter when the vault menu closes</summary>
     </key>
-    <key name="colorize-clipboard" type="b">
+    <key name="cwp-colorize-clipboard" type="b">
       <default>true</default>
       <summary>Colorize clipboard entries by content type</summary>
     </key>
-    <key name="fetch-youtube-titles" type="b">
+    <key name="cwp-fetch-youtube-titles" type="b">
       <default>false</default>
       <summary>Fetch and show YouTube video titles for copied links. WARNING: enabling this sends copied YouTube links (clipboard data) to a third-party service — https://www.youtube.com/oembed</summary>
     </key>

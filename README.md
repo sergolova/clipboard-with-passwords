@@ -324,7 +324,9 @@ reason). Fix the path in the extension settings and try again.
 
 ## ⚙️ Added settings
 
-Compared to the original extension, these settings were added:
+Compared to the original extension, these settings were added (all are
+`cwp-`-prefixed — being our own keys, they can never collide with a setting
+the original extension might add later):
 
 <p align="center">
   <img src="screenshots/settings.png" alt="Extension settings window" height="600"/>
@@ -332,18 +334,19 @@ Compared to the original extension, these settings were added:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `password-vault-path` | string | `~/.config/clipboard-indicator/passwords.zip` | Path to the encrypted vault ZIP archive |
-| `vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
-| `vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
-| `toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
-| `vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
-| `vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |
-| `vault-hidden-edge-warning` | boolean | `false` | Show a ⚠️ icon next to hidden passwords/fields whose value starts or ends with a space, line break or non-printable character. Catches invisible paste typos, but reveals metadata about the secret value to onlookers (off by default) |
-| `vault-password-request` | string | `session` | When to ask for the master password: `session` (once per session), `after-sleep` (re-ask only after a real suspend, plain screen lock keeps the vault unlocked), `every-open` (ask on every vault opening) |
-| `vault-reset-search-on-close` | boolean | `true` | Reset the vault search filter when the vault menu closes |
-| `colorize-clipboard` | boolean | `true` | Colorize clipboard entries by content type |
-| `fetch-youtube-titles` | boolean | `false` | Fetch and show YouTube video titles for copied links. ⚠️ Enabling this sends the copied YouTube link (clipboard data) to a third party — `https://www.youtube.com/oembed` |
-| `preview-on-hover` | boolean | `true` | Show the image preview while hovering over the preview button (click/keyboard preview always works) |
+| `cwp-password-vault-path` | string | `~/.config/clipboard-indicator/passwords.zip` | Path to the encrypted vault ZIP archive |
+| `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
+| `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
+| `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
+| `cwp-vault-pin-recent` | boolean | `true` | Pin the last used service card at the top of the vault |
+| `cwp-vault-hide-all-category` | boolean | `false` | «All» privacy mode — hide all services until the user searches |
+| `cwp-vault-hidden-edge-warning` | boolean | `false` | Show a ⚠️ icon next to hidden passwords/fields whose value starts or ends with a space, line break or non-printable character. Catches invisible paste typos, but reveals metadata about the secret value to onlookers (off by default) |
+| `cwp-vault-password-request` | string | `session` | When to ask for the master password: `session` (once per session), `after-sleep` (re-ask only after a real suspend, plain screen lock keeps the vault unlocked), `every-open` (ask on every vault opening) |
+| `cwp-vault-reset-search-on-close` | boolean | `true` | Reset the vault search filter when the vault menu closes |
+| `cwp-colorize-clipboard` | boolean | `true` | Colorize clipboard entries by content type |
+| `cwp-fetch-youtube-titles` | boolean | `false` | Fetch and show YouTube video titles for copied links. ⚠️ Enabling this sends the copied YouTube link (clipboard data) to a third party — `https://www.youtube.com/oembed` |
+| `cwp-preview-on-hover` | boolean | `true` | Show the image preview while hovering over the preview button (click/keyboard preview always works) |
+| `cwp-strip-line-breaks` | boolean | `false` | Strip leading/trailing line breaks from copied text (keeps spaces) |
 
 ## 🛠 Development
 
