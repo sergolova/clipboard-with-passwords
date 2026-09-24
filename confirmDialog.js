@@ -20,6 +20,7 @@ export class DialogManager {
 }
 
 const ConfirmDialog = GObject.registerClass(
+  {GTypeName: 'ClipboardWithPasswordsConfirmDialog'},
   class ConfirmDialog extends ModalDialog.ModalDialog {
 
     _init(title, desc, ok_label, cancel_label, callback) {

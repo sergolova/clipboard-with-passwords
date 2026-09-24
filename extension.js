@@ -106,7 +106,7 @@ export default class ClipboardIndicatorExtension extends Extension {
             uuid: this.uuid
         });
 
-        Main.panel.addToStatusArea('clipboardIndicator', this.clipboardIndicator, 1);
+        Main.panel.addToStatusArea('clipboardWithPasswordsIndicator', this.clipboardIndicator, 1);
     }
 
     disable() {
@@ -117,7 +117,7 @@ export default class ClipboardIndicatorExtension extends Extension {
 }
 
 const ClipboardIndicator = GObject.registerClass({
-    GTypeName: 'ClipboardIndicator'
+    GTypeName: 'ClipboardWithPasswordsIndicator'
 }, class ClipboardIndicator extends PanelMenu.Button {
     #refreshInProgress = false;
 
