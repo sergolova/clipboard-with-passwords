@@ -2,7 +2,8 @@
 
 A fork of the popular [Clipboard Indicator](https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator) (v71) for GNOME Shell, extended with a **built-in encrypted password manager**.
 
-Forked from: [Tudmotu/gnome-shell-extension-clipboard-indicator](https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator) · Extension UUID: `clipboard-with-passwords@sergolova`
+Forked from: [Tudmotu/gnome-shell-extension-clipboard-indicator](https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator) (extension UUID: `clipboard-indicator@tudmotu.com`)
+This extension UUID: `clipboard-with-passwords@sergolova`.
 
 ---
 
@@ -32,7 +33,7 @@ Image previews: see the dedicated [🖼️ Image previews](#-image-previews) sec
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
 
 ### 🖼️ Image previews
-Image items get a **proportional thumbnail** — non-square images are no longer squeezed into a square (that is what the original extension did, visibly distoring the picture):
+Image items get a **proportional thumbnail** — non-square images are no longer squeezed into a square (that is what the original extension did, visibly distorting the picture):
 
 - The thumbnail lives in a **fixed-height rectangle** (the width follows the image, up to **150px**): wide images fill the full height, tall and panoramic ones are fitted inside proportionally — nothing is cropped, stretched or letterboxed. Rows keep a constant height.
 - Next to the thumbnail the menu shows the image **size and format**, e.g. `1920 × 1080 · jpg` — read from the same texture that renders the thumbnail, so it costs nothing extra.
@@ -375,4 +376,4 @@ make
 ## 📄 License & credits
 
 - Original project: [Tudmotu/gnome-shell-extension-clipboard-indicator](https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator) — see [`LICENSE.rst`](LICENSE.rst).
-- This fork (password vault and related features) is maintained by **sergolova**.
+- [This fork (password vault and related features)](https://github.com/sergolova/clipboard-with-passwords) is maintained by **sergolova** ([https://github.com/sergolova](https://github.com/sergolova))
