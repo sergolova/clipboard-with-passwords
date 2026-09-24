@@ -81,6 +81,7 @@
     height:1.5em;
     margin:0;
     padding:0;
+    background-color:#000;
 }
 
 .ci-theme-light .clipboard-menu-img-preview {
@@ -92,6 +93,7 @@
     width:1em;
     height:1em;
     margin-right:.25em;
+    background-color:#000;
 }
 
 .ci-theme-light .clipboard-indicator-img-preview {

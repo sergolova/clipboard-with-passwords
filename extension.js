@@ -275,6 +275,101 @@ const ClipboardIndicator = GObject.registerClass({
         });
     }
 
+    // Small square preview that scales the image PROPORTIONALLY instead of
+    // stretching it to fill the box (St.Icon scales a gicon texture to its
+    // icon size, i.e. a non-square image gets squashed into a square). The
+    // squared container keeps its CSS em size and letterboxes with black.
+    // The loaded texture stays at its natural size; a fixed-size St.Bin
+    // holder (centered via AlignConstraint, same pattern as the full-screen
+    // image preview) shows the whole image proportionally scaled.
+    #createAspectImagePreview(entry, previewClass) {
+        // Gap between the image and the 1px CSS border of the preview box.
+        const PREVIEW_INSET = 2;
+        const box = new St.Widget({
+            style_class: previewClass,
+            clip_to_allocation: true
+        });
+
+        this.registry.getEntryAsTexture(entry).then(actor => {
+            if (!actor || this._destroyed || !box.get_parent())
+                return;
+
+            // Fixed-size holder centered in the square; the texture child is
+            // allocated at its natural size and clipped to the holder.
+            const holder = new St.Bin({clip_to_allocation: true});
+            holder.add_constraint(new Clutter.AlignConstraint({
+                source: box,
+                align_axis: Clutter.AlignAxis.X_AXIS,
+                factor: 0.5
+            }));
+            holder.add_constraint(new Clutter.AlignConstraint({
+                source: box,
+                align_axis: Clutter.AlignAxis.Y_AXIS,
+                factor: 0.5
+            }));
+            box.add_child(holder);
+
+            let fitted = false;
+            let actorDestroyed = false;
+            let actorId = 0;
+            let boxAllocId = 0;
+            let boxDestroyId = 0;
+
+            const cleanup = () => {
+                if (actorId) {
+                    actor.disconnect(actorId);
+                    actorId = 0;
+                }
+                if (boxAllocId) {
+                    box.disconnect(boxAllocId);
+                    boxAllocId = 0;
+                }
+                if (boxDestroyId) {
+                    box.disconnect(boxDestroyId);
+                    boxDestroyId = 0;
+                }
+            };
+
+            const fitTexture = () => {
+                if (fitted)
+                    return;
+
+                // Natural image size is only known once the texture content
+                // is set; the box pixel size only after allocation. Leave a
+                // small inset so the image never touches the 1px border.
+                const [, natW] = actor.get_preferred_width(-1);
+                const [, natH] = actor.get_preferred_height(-1);
+                const square = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
+                if (natW <= 0 || natH <= 0 || square <= 0)
+                    return;
+
+                const scale = Math.min(square / natW, square / natH);
+                holder.set_size(Math.max(1, Math.round(natW * scale)),
+                                Math.max(1, Math.round(natH * scale)));
+                holder.set_child(actor);
+                fitted = true;
+
+                cleanup();
+            };
+
+            actorId = actor.connect('notify::content', fitTexture);
+            boxAllocId = box.connect('notify::allocation', fitTexture);
+            boxDestroyId = box.connect('destroy', () => {
+                cleanup();
+                if (!fitted && !actorDestroyed)
+                    actor.destroy();
+            });
+            actor.connect('destroy', () => {
+                actorDestroyed = true;
+                cleanup();
+            });
+
+            fitTexture();
+        });
+
+        return box;
+    }
+
     #updateIndicatorContent(entry) {
         if (this.preventIndicatorUpdate || (TOPBAR_DISPLAY_MODE !== 1 && TOPBAR_DISPLAY_MODE !== 2)) {
             return;
@@ -300,15 +395,14 @@ const ClipboardIndicator = GObject.registerClass({
             } else if (entry.isImage()) {
                 this._buttonText.set_text('');
                 this._buttonImgPreview.destroy_all_children();
-                this.registry.getEntryAsImage(entry).then(img => {
-                    img.add_style_class_name('clipboard-indicator-img-preview');
-                    img.y_align = Clutter.ActorAlign.CENTER;
+                const preview = this.#createAspectImagePreview(entry, 'clipboard-indicator-img-preview');
+                preview.y_align = Clutter.ActorAlign.CENTER;
 
-                    // icon only renders properly in setTimeout for some arcane reason
-                    this._imagePreviewTimeout = setTimeout(() => {
-                        this._buttonImgPreview.set_child(img);
-                    }, 0);
-                });
+                // icon only renders properly in setTimeout for some arcane reason
+                this._imagePreviewTimeout = setTimeout(() => {
+                    if (this._destroyed) return;
+                    this._buttonImgPreview.set_child(preview);
+                }, 0);
             }
         }
     }
@@ -950,14 +1044,12 @@ const ClipboardIndicator = GObject.registerClass({
                     MAX_ENTRY_LENGTH));
             }
         } else if (entry.isImage()) {
-            this.registry.getEntryAsImage(entry).then(img => {
-                img.add_style_class_name('clipboard-menu-img-preview');
-                if (menuItem.previewImage) {
-                    menuItem.remove_child(menuItem.previewImage);
-                }
-                menuItem.previewImage = img;
-                menuItem.insert_child_below(img, menuItem.label);
-            });
+            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview');
+            if (menuItem.previewImage) {
+                menuItem.remove_child(menuItem.previewImage);
+            }
+            menuItem.previewImage = preview;
+            menuItem.insert_child_below(preview, menuItem.label);
         }
     }
 

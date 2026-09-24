@@ -109,18 +109,6 @@ export class Registry {
         return GLib.file_test(filename, FileTest.EXISTS);
     }
 
-    async getEntryAsImage (entry) {
-        if (entry.isImage() === false) return;
-
-        if (this.#entryFileExists(entry) == false) {
-            await this.writeEntryFile(entry);
-        }
-
-        const gicon = Gio.icon_new_for_string(this.getEntryFilename(entry));
-        const stIcon = new St.Icon({ gicon });
-        return stIcon;
-    }
-
     async getEntryAsTexture (entry) {
         if (entry.isImage() === false) return null;
 
