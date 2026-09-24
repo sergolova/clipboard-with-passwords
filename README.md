@@ -32,7 +32,7 @@ Image previews: **hover** over the preview button for a quick full-screen look (
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
 
 ### 🛡️ Protect pinned items
-Pinned (favorite) text items can be flagged as a **password** with a single click (`Mark as password`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.
+Pinned (favorite) text items can be **protected** with a single click (`Mark as protected`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.
 
 ### 🔐 Built-in password manager
 - Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-indicator/passwords.zip`).

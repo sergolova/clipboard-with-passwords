@@ -38,7 +38,7 @@ export class Registry {
             }
 
             if (entry.getTag()) item.tag = entry.getTag();
-            if (entry.isPassword()) item.password = true;
+            if (entry.isProtected()) item.protected = true;
         }
 
         this.writeToFile(registryContent);
@@ -236,7 +236,10 @@ export class ClipboardEntry {
 
         const entry = new ClipboardEntry(mimetype, bytes, favorite);
         if (jsonEntry.tag) entry.setTag(jsonEntry.tag);
-        if (jsonEntry.password) entry.setPassword(true);
+        // Legacy registry caches stored this flag as `password`; new caches use
+        // `protected`. Accept both so already-protected items stay masked after
+        // an upgrade (never unmask persisted data silently).
+        if (jsonEntry.protected || jsonEntry.password) entry.setProtected(true);
         return entry;
     }
 
@@ -283,14 +286,14 @@ export class ClipboardEntry {
         return this.#mimetype.startsWith('image/');
     }
 
-    #isPassword = false;
+    #isProtected = false;
 
-    isPassword () {
-        return this.#isPassword;
+    isProtected () {
+        return this.#isProtected;
     }
 
-    setPassword (val) {
-        this.#isPassword = !!val;
+    setProtected (val) {
+        this.#isProtected = !!val;
     }
 
     getMaskedValue () {

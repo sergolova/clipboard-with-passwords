@@ -295,7 +295,7 @@ const ClipboardIndicator = GObject.registerClass({
                 }
                 this._buttonImgPreview.destroy_all_children();
             } else if (entry.isText()) {
-                this._buttonText.set_text(this._truncate(entry.isPassword() ? entry.getMaskedValue() : entry.getStringValue(), MAX_TOPBAR_LENGTH));
+                this._buttonText.set_text(this._truncate(entry.isProtected() ? entry.getMaskedValue() : entry.getStringValue(), MAX_TOPBAR_LENGTH));
                 this._buttonImgPreview.destroy_all_children();
             } else if (entry.isImage()) {
                 this._buttonText.set_text('');
@@ -890,7 +890,7 @@ const ClipboardIndicator = GObject.registerClass({
             // Protected (***) multiline items: mask every displayed line so
             // no content leaks through the two-line preview.
             const displayLine = (text) => {
-                if (!entry.isPassword()) return text;
+                if (!entry.isProtected()) return text;
                 if (text.length <= 3) return '***';
                 return text.slice(0, -3) + '***';
             };
@@ -909,10 +909,10 @@ const ClipboardIndicator = GObject.registerClass({
 
             this._renderTwoLineBox(menuItem, line1Text, line2Text);
         } else if (entry.isText()) {
-            const rawText = entry.isPassword() ? entry.getMaskedValue() : entry.getStringValue();
+            const rawText = entry.isProtected() ? entry.getMaskedValue() : entry.getStringValue();
             const urlText = rawText.trim();
 
-            if (!entry.isPassword() && entry.isURL() && FETCH_YOUTUBE_TITLES &&
+            if (!entry.isProtected() && entry.isURL() && FETCH_YOUTUBE_TITLES &&
                 this.urlMetadataManager && this.urlMetadataManager.canHandle(urlText)) {
                 const cachedMeta = this.urlMetadataManager.getCachedMetadata(urlText);
                 if (cachedMeta && cachedMeta.title) {
@@ -969,7 +969,7 @@ const ClipboardIndicator = GObject.registerClass({
             'clipboard-type-email',
             'clipboard-type-image',
             'clipboard-type-multiline',
-            'clipboard-type-password'
+            'clipboard-type-protected'
         ];
         TYPE_CLASSES.forEach(c => menuItem.actor.remove_style_class_name(c));
 
@@ -992,8 +992,8 @@ const ClipboardIndicator = GObject.registerClass({
             menuItem.actor.add_style_class_name('clipboard-type-multiline');
         }
 
-        if (entry.isPassword()) {
-            menuItem.actor.add_style_class_name('clipboard-type-password');
+        if (entry.isProtected()) {
+            menuItem.actor.add_style_class_name('clipboard-type-protected');
         }
     }
 
@@ -1145,12 +1145,12 @@ const ClipboardIndicator = GObject.registerClass({
         menuItem.radioGroup = this.clipItemsRadioGroup;
 
         // Invariant: a protected (***) item is always pinned. Older versions
-        // allowed pin → protect → unpin, persisting password=true with
+        // allowed pin → protect → unpin, persisting protected=true with
         // favorite=false and stranding items masked in the history list with
         // no unprotect button. Clear protection on load/recreate so that
         // state can never exist (works as a migration for legacy registries).
-        if (entry.isPassword() && !entry.isFavorite()) {
-            entry.setPassword(false);
+        if (entry.isProtected() && !entry.isFavorite()) {
+            entry.setProtected(false);
         }
 
         // CLICK fix for Paste on Select: clicking behaves like Enter
@@ -1340,36 +1340,36 @@ const ClipboardIndicator = GObject.registerClass({
             () => this._favoriteToggle(menuItem)
         );
 
-        // Password toggle button (pinned single-line text items; file/URIList and
+        // Protect toggle button (pinned single-line text items; file/URIList and
         // color entries are not protectable)
         if (entry.isText() && !entry.isURIList() && !entry.isColor()) {
-            const pwIcon = new St.Icon({
-                icon_name: entry.isPassword() ? 'security-high-symbolic' : 'channel-insecure-symbolic',
+            const protectIcon = new St.Icon({
+                icon_name: entry.isProtected() ? 'security-high-symbolic' : 'channel-insecure-symbolic',
                 style_class: 'system-status-icon'
             });
-            menuItem.passwordBtn = new St.Button({
+            menuItem.protectBtn = new St.Button({
                 style_class: 'ci-action-btn',
                 can_focus: true,
-                accessible_name: entry.isPassword() ? _('Unmark as password') : _('Mark as password'),
-                child: pwIcon,
+                accessible_name: entry.isProtected() ? _('Unmark as protected') : _('Mark as protected'),
+                child: protectIcon,
                 visible: entry.isFavorite(),
                 x_expand: false,
                 y_expand: true
             });
-            menuItem.passwordBtn.connect('clicked', () => {
-                entry.setPassword(!entry.isPassword());
-                menuItem.passwordBtn.visible = entry.isFavorite();
-                menuItem.passwordBtn.child.icon_name = entry.isPassword()
+            menuItem.protectBtn.connect('clicked', () => {
+                entry.setProtected(!entry.isProtected());
+                menuItem.protectBtn.visible = entry.isFavorite();
+                menuItem.protectBtn.child.icon_name = entry.isProtected()
                     ? 'security-high-symbolic'
                     : 'channel-insecure-symbolic';
-                menuItem.passwordBtn.accessible_name = entry.isPassword()
-                    ? _('Unmark as password')
-                    : _('Mark as password');
+                menuItem.protectBtn.accessible_name = entry.isProtected()
+                    ? _('Unmark as protected')
+                    : _('Mark as protected');
                 this._setEntryLabel(menuItem);
-                this.#updatePasswordStyle(menuItem);
+                this.#updateProtectedStyle(menuItem);
                 this._updateCache();
             });
-            menuItem.actor.add_child(menuItem.passwordBtn);
+            menuItem.actor.add_child(menuItem.protectBtn);
         }
 
         // Paste button
@@ -1460,8 +1460,8 @@ const ClipboardIndicator = GObject.registerClass({
         // unpinning clears protection, otherwise the item would slip into the
         // history list where the unprotect button is hidden. _moveItemFirst
         // recreates the widget, so the visual state follows automatically.
-        if (wasFavorite && menuItem.entry.isPassword()) {
-            menuItem.entry.setPassword(false);
+        if (wasFavorite && menuItem.entry.isProtected()) {
+            menuItem.entry.setProtected(false);
         }
 
         this._moveItemFirst(menuItem);
@@ -1554,11 +1554,11 @@ const ClipboardIndicator = GObject.registerClass({
         }
     }
 
-    #updatePasswordStyle(menuItem) {
-        if (COLORIZE_CLIPBOARD && menuItem.entry.isPassword()) {
-            menuItem.actor.add_style_class_name('clipboard-type-password');
+    #updateProtectedStyle(menuItem) {
+        if (COLORIZE_CLIPBOARD && menuItem.entry.isProtected()) {
+            menuItem.actor.add_style_class_name('clipboard-type-protected');
         } else {
-            menuItem.actor.remove_style_class_name('clipboard-type-password');
+            menuItem.actor.remove_style_class_name('clipboard-type-protected');
         }
         this.#updateIndicatorContent(menuItem.entry);
     }

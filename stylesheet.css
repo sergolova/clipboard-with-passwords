@@ -173,12 +173,12 @@
     color: #1871a5;
 }
 
-.clipboard-type-password {
+.clipboard-type-protected {
     color: #e67300;
     background-color: rgba(230, 115, 0, 0.08);
 }
 
-.ci-theme-light .clipboard-type-password {
+.ci-theme-light .clipboard-type-protected {
     color: #b25a00;
     background-color: rgba(230, 115, 0, 0.1);
 }
