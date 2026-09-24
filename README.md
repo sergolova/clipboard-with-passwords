@@ -341,7 +341,7 @@ Compared to the original extension, these settings were added:
 
 ```bash
 # syntax check the JavaScript
-node --check extension.js && node --check passwordVault*.js
+node --check *.js
 
 # update the translation template and merge it into the locale files
 make update-po-files

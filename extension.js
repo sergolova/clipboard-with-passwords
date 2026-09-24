@@ -16,6 +16,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {Registry, ClipboardEntry} from './registry.js';
+import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields} from './constants.js';
 import {Keyboard} from './keyboard.js';
@@ -134,7 +135,7 @@ const ClipboardIndicator = GObject.registerClass({
         this.#closeImagePreview();
         this._removeHistoryLabel();
         this._destroyNotifSource();
-        this._destroyAutoLock();
+        this.autoLock.disable();
         this.dialogManager.destroy();
         // Iterate a copy: close() fires 'closed', which splices the dialog
         // out of _vaultDialogs and (with destroyOnClose) destroys it.
@@ -197,7 +198,10 @@ const ClipboardIndicator = GObject.registerClass({
         this.isVaultMode = false;
         this.keyboard = new Keyboard();
         this._unlockedVaultPath = null;
-        this._setupAutoLock();
+        this.autoLock = new AutoLockManager({
+            onAutoLock: cause => this._autoLockVault(cause)
+        });
+        this.autoLock.enable();
         this._settingsChangedId = null;
         this._selectionOwnerChangedId = null;
         this._historyLabel = null;
@@ -2142,76 +2146,6 @@ const ClipboardIndicator = GObject.registerClass({
         } else {
             this._showVaultMenu();
         }
-    }
-
-    _setupAutoLock() {
-        // Screen lock: gnome-shell exposes org.gnome.ScreenSaver on the
-        // session bus for compatibility (works on X11 and Wayland).
-        try {
-            const iface = '<node><interface name="org.gnome.ScreenSaver"><signal name="Locked"/></interface></node>';
-            const proxy = Gio.DBusProxy.new_for_bus_sync(
-                Gio.BusType.SESSION,
-                Gio.DBusProxyFlags.NONE,
-                null,
-                'org.gnome.ScreenSaver',
-                '/org/gnome/ScreenSaver',
-                iface,
-                null
-            );
-            if (proxy) {
-                this._screenSaverProxy = proxy;
-                this._screenSaverSignalId = proxy.connectSignal('Locked',
-                    () => this._autoLockVault('screen-lock'));
-            }
-        } catch (e) {
-            console.warn('Clipboard Indicator: cannot subscribe to screen lock:', e);
-        }
-
-        // Suspend / resume (system bus, requires a non-sandboxed extension).
-        try {
-            const iface = '<node><interface name="org.freedesktop.login1.Manager"><signal name="PrepareForSleep"><arg type="b"/></signal></interface></node>';
-            const proxy = Gio.DBusProxy.new_for_bus_sync(
-                Gio.BusType.SYSTEM,
-                Gio.DBusProxyFlags.NONE,
-                null,
-                'org.freedesktop.login1',
-                '/org/freedesktop/login1',
-                iface,
-                null
-            );
-            if (proxy) {
-                this._login1Proxy = proxy;
-                this._login1SignalId = proxy.connectSignal('PrepareForSleep',
-                    (proxy, senderName, signalName, parameters) => {
-                        const sleeping = parameters && parameters[0] === true;
-                        if (sleeping) {
-                            this._autoLockVault('sleep');
-                        }
-                    }
-                );
-            }
-        } catch (e) {
-            console.warn('Clipboard Indicator: cannot subscribe to suspend:', e);
-        }
-    }
-
-    _destroyAutoLock() {
-        if (this._screenSaverProxy && this._screenSaverSignalId) {
-            try {
-                this._screenSaverProxy.disconnectSignal(this._screenSaverSignalId);
-            } catch (e) {
-            }
-        }
-        if (this._login1Proxy && this._login1SignalId) {
-            try {
-                this._login1Proxy.disconnectSignal(this._login1SignalId);
-            } catch (e) {
-            }
-        }
-        this._screenSaverProxy = null;
-        this._login1Proxy = null;
-        this._screenSaverSignalId = null;
-        this._login1SignalId = null;
     }
 
     _autoLockVault(cause) {
