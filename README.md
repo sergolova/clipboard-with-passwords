@@ -45,8 +45,8 @@ Image items get a **proportional thumbnail** — non-square images are no longer
   <img src="screenshots/image-preview.png" alt="Clipboard menu with proportional image thumbnails and size/format labels" height="300"/>
 </p>
 
-### 🛡️ Protect pinned items
-Pinned (favorite) text items can be **protected** with a single click (`Mark as protected`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings.
+### 🎭 Privacy mask for pinned items
+Pinned (favorite) text items can be **masked** with a single click (`Apply privacy mask`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings. The mask is a **display-only** feature: the full value stays stored and readable (in the vault and in the item's own entry) — it is **not** encryption.
 
 ### 🔐 Built-in password manager
 - Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-with-passwords/storage.zip`).

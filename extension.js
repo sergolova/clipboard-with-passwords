@@ -1579,7 +1579,7 @@ const ClipboardIndicator = GObject.registerClass({
             menuItem.protectBtn = new St.Button({
                 style_class: 'ci-action-btn',
                 can_focus: true,
-                accessible_name: entry.isProtected() ? _('Unmark as protected') : _('Mark as protected'),
+                accessible_name: entry.isProtected() ? _('Remove privacy mask') : _('Apply privacy mask'),
                 child: protectIcon,
                 visible: entry.isFavorite(),
                 x_expand: false,
@@ -1592,8 +1592,8 @@ const ClipboardIndicator = GObject.registerClass({
                     ? 'security-high-symbolic'
                     : 'channel-insecure-symbolic';
                 menuItem.protectBtn.accessible_name = entry.isProtected()
-                    ? _('Unmark as protected')
-                    : _('Mark as protected');
+                    ? _('Remove privacy mask')
+                    : _('Apply privacy mask');
                 this._setEntryLabel(menuItem);
                 this.#updateProtectedStyle(menuItem);
                 this._updateCache();

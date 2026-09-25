@@ -294,7 +294,7 @@ class Settings {
 
         this.field_colorize_clipboard = new Adw.SwitchRow({
             title: _("Colorize clipboard content"),
-            subtitle: _("Highlight clipboard entries by type (files, URLs, emails, colors, protected items)")
+            subtitle: _("Highlight clipboard entries by type (files, URLs, emails, colors, masked items)")
         });
 
         this.field_fetch_youtube_titles = new Adw.SwitchRow({
