@@ -7,7 +7,8 @@ import {
     MAX_VAULT_JSON_BYTES,
     MAX_VAULT_ITEMS,
     MAX_FIELD_LENGTH,
-    MAX_EXTRA_FIELDS
+    MAX_EXTRA_FIELDS,
+    STALE_TEMP_MIN_AGE_MS
 } from './constants.js';
 import { logWarn } from './logging.js';
 import { cryptoRandomInt, setEntropySource } from './random.js';
@@ -425,6 +426,10 @@ export class PasswordVaultManager {
                     } catch (err) {
                         logWarn('Vault content alignment failed:', err);
                     }
+                    // P2.2: a save that died mid-way (crash / kill / power loss)
+                    // leaves temp artifacts behind — clean up ours now that the
+                    // vault is unlocked, so read-only sessions also self-heal.
+                    this._cleanupStaleTemp();
                     resolve(true);
                 } catch (e) {
                     reject(e);
@@ -437,6 +442,10 @@ export class PasswordVaultManager {
         if (!this.unlocked || !this.masterPassword) {
             throw new Error(_('The password vault is locked.'));
         }
+
+        // P2.2: remove temp artifacts a previous save may have left behind
+        // (crash / kill / power loss) before writing anything new.
+        this._cleanupStaleTemp();
 
         const zipFile = Gio.File.new_for_path(this.zipPath);
         // The archive name always follows the container: if the active format
@@ -685,6 +694,112 @@ export class PasswordVaultManager {
         } catch (e) {
             return false;
         }
+    }
+
+    // P2.2: remove temporary artifacts left behind by a save that died mid-way
+    // (crash / kill / power loss). The normal cleanup callbacks always run on
+    // the success and failure paths, but not on abnormal termination, so two
+    // kinds of leftovers can survive:
+    //   * in the system temp dir: the private `ci_vault_XXXXXX` directory with
+    //     the plaintext JSON, plus legacy flat `ci_vault_<ts>.json` files from
+    //     older versions of the extension;
+    //   * next to the archive: `<vault>.tmp-<ts>` encrypted half-written
+    //     archives from an atomic save that never reached the rename.
+    // Deleting is strictly scoped: only this extension's exact naming patterns
+    // AND entries older than STALE_TEMP_MIN_AGE_MS qualify, so a live write or
+    // an arbitrary file can never be touched. Best-effort — never throws; a
+    // failure is logged and the caller proceeds.
+    _cleanupStaleTemp() {
+        const now = Date.now();
+        // Gio has no recursive delete in this environment, so remove the
+        // contents first, then the entry itself. Symbolic links are never
+        // followed (their type is SYMBOLIC_LINK, and delete removes the link).
+        const removeRecursive = (file) => {
+            let type;
+            try {
+                type = file.query_file_type(Gio.FileQueryInfoFlags.NONE, null);
+            } catch (e) {
+                return;
+            }
+            if (type === Gio.FileType.DIRECTORY) {
+                try {
+                    const kids = file.enumerate_children('standard::name',
+                        Gio.FileQueryInfoFlags.NONE, null);
+                    let info;
+                    while ((info = kids.next_file(null)) !== null) {
+                        removeRecursive(file.get_child(info.get_name()));
+                    }
+                } catch (e) {
+                }
+            }
+            try {
+                file.delete(null);
+            } catch (e) {
+            }
+        };
+        const tryDelete = (file) => {
+            try {
+                removeRecursive(file);
+            } catch (e) {
+                logWarn('Failed to remove stale temp artifact:', e);
+            }
+        };
+
+        // Collect first, delete after iteration — never mutate a directory
+        // while enumerating it.
+        const sweep = (dirPath, isCandidate) => {
+            const doomed = [];
+            try {
+                const dir = Gio.File.new_for_path(dirPath);
+                if (!dir.query_exists(null)) {
+                    return;
+                }
+                const kids = dir.enumerate_children('standard::name,time::modified',
+                    Gio.FileQueryInfoFlags.NONE, null);
+                let info;
+                while ((info = kids.next_file(null)) !== null) {
+                    const name = info.get_name();
+                    if (!isCandidate(info, name)) {
+                        continue;
+                    }
+                    const ageMillis = now - info.get_modification_date_time().to_unix() * 1000;
+                    if (ageMillis < STALE_TEMP_MIN_AGE_MS) {
+                        continue; // younger than the guard — treat as a live write
+                    }
+                    doomed.push(dir.get_child(name));
+                }
+            } catch (e) {
+                logWarn('Stale temp cleanup failed in', dirPath, ':', e);
+                return;
+            }
+            for (const file of doomed) {
+                tryDelete(file);
+            }
+        };
+
+        // 1) Plaintext JSON leftovers in the system temp dir. The current
+        //    format is a private directory `ci_vault_XXXXXX` (dir_make_tmp
+        //    pattern); earlier versions wrote flat `ci_vault_<ts>.json`.
+        sweep(GLib.get_tmp_dir(), (info, name) => {
+            if (info.get_file_type() === Gio.FileType.DIRECTORY) {
+                return /^ci_vault_[A-Za-z0-9]{6}$/.test(name);
+            }
+            return /^ci_vault_\d+\.json$/.test(name);
+        });
+
+        // 2) Encrypted half-written temp archives next to the destination.
+        const zipFile = Gio.File.new_for_path(this.zipPath);
+        const parent = zipFile.get_parent();
+        if (!parent) {
+            return;
+        }
+        const archiveName = zipFile.get_basename();
+        sweep(parent.get_path(), (info, name) => {
+            if (!name.startsWith(archiveName + '.tmp-')) {
+                return false;
+            }
+            return /^\d+$/.test(name.slice(archiveName.length + '.tmp-'.length));
+        });
     }
 
     // Turn a failed decrypt / corrupt-archive error into a message that

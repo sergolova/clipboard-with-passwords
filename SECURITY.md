@@ -105,9 +105,15 @@ user's session.
   in the same directory, decrypted back and compared with the exact JSON that
   was serialized, and only then renamed over the target. A write that failed
   mid-way can never destroy the previous healthy archive (and its `.bak`).
-- **No vault data is ever written to the system `/tmp` directory** — the
-  atomic-save temporary file lives in the vault's own directory (same
-  filesystem) and inherits the archive's permissions.
+- Two kinds of temporary files exist around a save and neither outlives normal
+  operations: the **encrypted** archive is staged in a temporary file in the
+  vault's own directory (same filesystem), and the **plaintext** JSON being
+  packed lives only inside a private (0700) directory in the system temp dir
+  (the file itself tightened to 0600) and is removed as soon as packing
+  finishes. Leftovers of a save that died mid-way (crash, kill, power loss) are
+  cleaned up at the next vault open or save — deletion is strictly scoped to
+  this extension's own exact temp-artifact names, and it is *opportunistic*:
+  no guarantee of secure removal after abnormal termination is made.
 
 ## Clipboard & history
 

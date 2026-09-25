@@ -85,3 +85,4 @@ export const MAX_VAULT_JSON_BYTES = 64 * 1024 * 1024;      // decompressed JSON 
 export const MAX_VAULT_ITEMS = 1000;                       // records per vault
 export const MAX_FIELD_LENGTH = 4096;                      // chars per string field (name, password, extra label/value, …)
 export const MAX_EXTRA_FIELDS = 32;                        // extra fields per item
+export const STALE_TEMP_MIN_AGE_MS = 60 * 1000;            // P2.2: temp artifacts younger than this are treated as live writes

@@ -285,7 +285,8 @@ Saves are **atomic**: the archive is first written to a temporary file next to
 it (`storage.zip.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
 renamed over the target with `GLib.rename`. A crash or power loss in the middle
 of a save leaves the previous archive (and its `.bak`) intact — never a
-half-written `storage.zip`.
+half-written `storage.zip`. Temporary leftovers of a save that died mid-way are
+removed automatically the next time the vault is opened or saved.
 
 ### Example `data.json`
 
