@@ -4,7 +4,7 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {gettext as _, ngettext} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { generatePassword } from './passwordVault.js';
 import { themeColors } from './theme.js';
 import { logWarn } from './logging.js';
@@ -278,7 +278,8 @@ export const ServiceEditDialog = GObject.registerClass(
             if (focusFieldName === 'login') this.focusTargetWidget = this.loginEntry;
 
             // PASSWORD + GENERATOR
-            mainBox.add_child(new St.Label({ text: _('Password:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' }));
+            let pwdLabel = new St.Label({ text: _('Password:'), style: 'font-weight: bold; font-size: 12px; margin-top: 6px;' });
+            mainBox.add_child(pwdLabel);
             let pwdBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
             this.pwdEntry = new St.PasswordEntry({
                 text: serviceItem ? (serviceItem.password || '') : '',
@@ -288,6 +289,19 @@ export const ServiceEditDialog = GObject.registerClass(
             this._deferEditable(this.pwdEntry);
             pwdBox.add_child(this.pwdEntry);
             if (focusFieldName === 'password') this.focusTargetWidget = this.pwdEntry;
+
+            // Live length counter shown in the label itself — "Password: (N chars)" —
+            // so no extra rows are needed and the dialog height stays flat. It
+            // updates on every text change (typing or the generator) and hides
+            // the count for an empty field.
+            const updatePwdLength = () => {
+                const n = this.pwdEntry.text.length;
+                pwdLabel.set_text(n > 0
+                    ? `${_('Password:')} (${ngettext('%d char', '%d chars', n).replace('%d', String(n))})`
+                    : _('Password:'));
+            };
+            this.pwdEntry.connect('notify::text', updatePwdLength);
+            updatePwdLength(); // reflect the pre-filled value at open
 
             let genBox = new St.BoxLayout({
                 vertical: false,
