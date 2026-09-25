@@ -70,3 +70,18 @@ export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zi
 // never customized (see prefs.js normalization): the extension then creates
 // `storage.7z` instead of `storage.zip` so the file name stays honest.
 export const DEFAULT_VAULT_PATH_7Z = '~/.config/clipboard-with-passwords/storage.7z';
+
+// P1.3: structural limits enforced when a vault archive is loaded, so a
+// crafted or hand-broken archive cannot make the shell JSON.parse unbounded
+// data, hold an unbounded item list in memory, or render unbounded UI.
+// These are generous upper bounds — a real vault is a few kilobytes — sized so
+// no legitimate vault trips them while an archive bomb still fails fast with a
+// readable message. Any breach REJECTS the load (never silent truncation:
+// cutting a password would corrupt it forever, and an oversized archive must
+// fail loudly). The message strings in passwordVault.js carry the numbers
+// (max 1000 / 4096) — keep them in sync with the values here.
+export const MAX_VAULT_ARCHIVE_BYTES = 64 * 1024 * 1024;   // on-disk archive, pre-check before unpacking
+export const MAX_VAULT_JSON_BYTES = 64 * 1024 * 1024;      // decompressed JSON string (UTF-16 units), before JSON.parse
+export const MAX_VAULT_ITEMS = 1000;                       // records per vault
+export const MAX_FIELD_LENGTH = 4096;                      // chars per string field (name, password, extra label/value, …)
+export const MAX_EXTRA_FIELDS = 32;                        // extra fields per item

@@ -2,6 +2,13 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { DEFAULT_VAULT_PATH } from './constants.js';
+import {
+    MAX_VAULT_ARCHIVE_BYTES,
+    MAX_VAULT_JSON_BYTES,
+    MAX_VAULT_ITEMS,
+    MAX_FIELD_LENGTH,
+    MAX_EXTRA_FIELDS
+} from './constants.js';
 import { logWarn } from './logging.js';
 import { cryptoRandomInt, setEntropySource } from './random.js';
 
@@ -324,6 +331,21 @@ export class PasswordVaultManager {
             throw new Error(_('The password vault file is read-only and cannot be updated.') + '\n' + this.zipPath);
         }
 
+        // P1.3: cheap on-disk pre-check — stop archive bombs before 7-Zip even
+        // unpacks them. `communicate_utf8_async` buffers the entire stdout, so
+        // the archive size on disk is the earliest moment this can fail.
+        let archiveSize = 0;
+        try {
+            archiveSize = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null)
+                .get_size();
+        } catch (e) {
+            // stat failed (unlikely: the file passed the existence/read/write
+            // checks above) — let the subsequent flow surface the real error.
+        }
+        if (archiveSize > MAX_VAULT_ARCHIVE_BYTES) {
+            throw new Error(_('The vault archive is too large.') + '\n' + this.zipPath);
+        }
+
         const archiveBinary = resolveArchiveBinary();
         if (!archiveBinary) {
             throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
@@ -361,6 +383,15 @@ export class PasswordVaultManager {
                         return;
                     }
 
+                    // P1.3: the decompressed payload was already buffered by
+                    // communicate_utf8_async (mid-stream capping is a follow-up,
+                    // see task P1.3 step 3); refuse to JSON.parse anything that
+                    // hits the limit so allocation stays bounded.
+                    if (stdout.length > MAX_VAULT_JSON_BYTES) {
+                        reject(new Error(_('The vault archive contains too much data.')));
+                        return;
+                    }
+
                     let parsedData;
                     try {
                         parsedData = JSON.parse(stdout);
@@ -369,19 +400,21 @@ export class PasswordVaultManager {
                         return;
                     }
 
+                    // Validate + bound the payload BEFORE committing state: an
+                    // oversized or malformed archive must reject the unlock
+                    // without leaving the vault half-unlocked with stale data
+                    // (P1.3). Any _normalizeVaultData Error is already a
+                    // user-readable message, so it is passed through as-is.
+                    let normalized;
+                    try {
+                        normalized = this._normalizeVaultData(parsedData);
+                    } catch (e) {
+                        reject(e);
+                        return;
+                    }
                     this.masterPassword = password;
                     this.unlocked = true;
-                    // Re-sanitize on load so legacy or hand-edited items get
-                    // cleaned the next time the vault is saved. Missing or
-                    // duplicated ids (a common outcome of hand-editing the
-                    // JSON: omitted id, or copy-pasted records) are made
-                    // unique here — every record survives, no card is lost.
-                    this.data = {
-                        version: parsedData.version || 1,
-                        items: this._normalizeIds(
-                            (parsedData.items || []).map(it => this._sanitizeItem(it))
-                        )
-                    };
+                    this.data = normalized;
                     // Align the on-disk archive with its content (rename to a
                     // matching name, convert to the selected format) without
                     // failing the unlock — the vault data is already loaded.
@@ -756,33 +789,82 @@ export class PasswordVaultManager {
         return items;
     }
 
+    // P1.3: turn raw parsed-unlock payload into a bounded, trusted shape.
+    // Items count, per-field lengths and per-item extra-field count are capped
+    // (constants.js); version is coerced to a number. Any breach throws a
+    // user-readable Error. Called BEFORE the manager commits unlocked state,
+    // so a rejected payload never leaves the vault half-unlocked.
+    _normalizeVaultData(parsed) {
+        if (!parsed || typeof parsed !== 'object') {
+            throw new Error(_('The vault archive contains invalid data.'));
+        }
+        if (!Array.isArray(parsed.items)) {
+            throw new Error(_('The vault archive contains invalid data.'));
+        }
+        if (parsed.items.length > MAX_VAULT_ITEMS) {
+            throw new Error(_('The vault contains too many items (max 1000).'));
+        }
+        const items = parsed.items.map(it => this._sanitizeItem(it));
+        return {
+            version: typeof parsed.version === 'number' ? parsed.version : 1,
+            // Missing/duplicated ids (a common outcome of hand-editing data.json:
+            // omitted id, or copy-pasted records) are made unique here — every
+            // record survives, no card is lost.
+            items: this._normalizeIds(items)
+        };
+    }
+
     // Build a minimal item object: empty/false fields are omitted entirely so
     // the stored JSON stays clean and easy to edit by hand or with other tools.
+    // Items coming from the outside (unlock / hand-edited JSON) are bounded by
+    // the P1.3 caps: a field longer than MAX_FIELD_LENGTH or more than
+    // MAX_EXTRA_FIELDS extra fields rejects the whole load instead of being
+    // silently truncated (cutting a password would corrupt it forever, and an
+    // archive bomb must fail loudly). Malformed item entries (null, string,
+    // array) also reject with a readable message instead of a raw TypeError.
     _sanitizeItem(data) {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            throw new Error(_('The vault archive contains invalid data.'));
+        }
+        const capField = (value) => {
+            if (typeof value === 'string' && value.length > MAX_FIELD_LENGTH) {
+                throw new Error(_('A vault item contains a field that is too long.'));
+            }
+            return value;
+        };
         const item = {
-            id: data.id || this._generateId(),
-            name: data.name || _('Untitled'),
+            id: capField(data.id) || this._generateId(),
+            name: capField(data.name) || _('Untitled'),
             updatedAt: data.updatedAt || Date.now()
         };
-        if (data.category && data.category.trim()) item.category = data.category.trim();
-        if (data.description && data.description.trim()) item.description = data.description.trim();
-        if (data.login && data.login.trim()) item.login = data.login.trim();
-        if (data.password) item.password = data.password;
+        if (data.category && data.category.trim()) item.category = capField(data.category.trim());
+        if (data.description && data.description.trim()) item.description = capField(data.description.trim());
+        if (data.login && data.login.trim()) item.login = capField(data.login.trim());
+        if (data.password) item.password = capField(data.password);
         if (Array.isArray(data.extraFields)) {
             const extras = data.extraFields
                 .map(f => {
+                    if (!f || typeof f !== 'object' || Array.isArray(f)) {
+                        throw new Error(_('The vault archive contains invalid data.'));
+                    }
                     const e = {};
-                    if (f.label && f.label.trim()) e.label = f.label.trim();
+                    if (f.label && f.label.trim()) e.label = capField(f.label.trim());
                     // Keep the stored value verbatim (no trim): leading/trailing
                     // invisible junk must survive so the (opt-in) edge-warning
                     // icon in the card can flag it. Only the label is trimmed.
                     if (f.value !== undefined && f.value !== null && String(f.value).trim() !== '') {
-                        e.value = String(f.value);
+                        e.value = capField(String(f.value));
                     }
                     if (f.isHidden) e.isHidden = true;
                     return e;
                 })
                 .filter(f => f.label || f.value);
+            // The cap applies to the *normalized* list (empty entries are
+            // dropped first), so a record with junk extra fields is not
+            // penalised for them.
+            if (extras.length > MAX_EXTRA_FIELDS) {
+                throw new Error(_('A vault item contains too many extra fields.'));
+            }
             if (extras.length > 0) item.extraFields = extras;
         }
         return item;
