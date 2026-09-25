@@ -105,7 +105,7 @@ Dialog buttons (service edit dialog):
 | Icon | What it does |
 | --- | --- |
 | 📋 | Paste the current clipboard content into the focused field (X11 workaround for Ctrl+V) |
-| 🎲 | Generate a random 16-character password |
+| 🎲 | Generate a cryptographically secure 16-character password (CSPRNG: draws from `/dev/urandom` via Gio, rejection sampling — `Math.random` is not used for anything secret) |
 | ➕ | Add a custom field |
 | 🗑️ | Delete the service |
 | ✖ | Close the dialog |

@@ -3,9 +3,11 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { generatePassword } from './passwordVault.js';
 import { themeColors } from './theme.js';
+import { logWarn } from './logging.js';
 
 // Button that inserts the CLIPBOARD text into `entry`:
 // - if the entry currently has key focus, inserts at the cursor (like Ctrl+V);
@@ -310,7 +312,16 @@ export const ServiceEditDialog = GObject.registerClass(
                 child: genBox
             });
             genBtn.connect('clicked', () => {
-                const newPwd = generatePassword(16);
+                let newPwd;
+                try {
+                    newPwd = generatePassword(16);
+                } catch (e) {
+                    // Entropy failure (/dev/urandom unreadable) — surface it
+                    // instead of silently degrading to Math.random().
+                    logWarn('Failed to generate a password:', e);
+                    Main.notify(_('Password Vault'), _('Failed to generate a password.'));
+                    return;
+                }
                 this.pwdEntry.set_text(newPwd);
                 this.pwdEntry.show_password = true;
             });

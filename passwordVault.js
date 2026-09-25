@@ -3,11 +3,43 @@ import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import { DEFAULT_VAULT_PATH } from './constants.js';
 import { logWarn } from './logging.js';
+import { cryptoRandomInt, setEntropySource } from './random.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
 // translated word (e.g. 'Все'/'All'): such a word could collide with a real
 // user category, and translations belong only to the button label in the UI.
 export const ALL_CATEGORY = '__all__';
+
+// Entropy source for the CSPRNG in random.js: the OS CSPRNG via /dev/urandom.
+// The exact-length loop is defensive — /dev/urandom never short-reads — and
+// keeps the pool filling contract ("exactly n fresh bytes") honest. No I/O
+// happens here: registration only stores the function reference.
+function readEntropyBytes(n) {
+    const out = new Uint8Array(n);
+    let got = 0;
+    const file = Gio.File.new_for_path('/dev/urandom');
+    let stream = null;
+    try {
+        stream = file.read(null);
+        while (got < n) {
+            const chunk = stream.read_bytes(n - got, null).get_data();
+            if (!chunk || chunk.length === 0)
+                throw new Error('empty read from /dev/urandom');
+            out.set(chunk, got);
+            got += chunk.length;
+        }
+    } finally {
+        if (stream) {
+            try {
+                stream.close(null);
+            } catch (e) {
+                // already failing or closed; nothing to do about it
+            }
+        }
+    }
+    return out;
+}
+setEntropySource(readEntropyBytes);
 
 export function generatePassword(length = 16, options = {}) {
     const {
@@ -30,17 +62,26 @@ export function generatePassword(length = 16, options = {}) {
 
     if (!chars) chars = lower + digits;
 
-    let res = '';
-    if (useUpper) res += upper[Math.floor(Math.random() * upper.length)];
-    if (useLower) res += lower[Math.floor(Math.random() * lower.length)];
-    if (useDigits) res += digits[Math.floor(Math.random() * digits.length)];
-    if (useSymbols) res += symbols[Math.floor(Math.random() * symbols.length)];
+    // Guarantee at least one character of every enabled class, drawn from the
+    // CSPRNG (see random.js — Math.random is not cryptographically secure).
+    const res = [];
+    if (useUpper) res.push(upper[cryptoRandomInt(upper.length)]);
+    if (useLower) res.push(lower[cryptoRandomInt(lower.length)]);
+    if (useDigits) res.push(digits[cryptoRandomInt(digits.length)]);
+    if (useSymbols) res.push(symbols[cryptoRandomInt(symbols.length)]);
 
     while (res.length < length) {
-        res += chars[Math.floor(Math.random() * chars.length)];
+        res.push(chars[cryptoRandomInt(chars.length)]);
     }
 
-    return res.split('').sort(() => Math.random() - 0.5).join('');
+    // Fisher–Yates with the same CSPRNG: without a shuffle the seed characters
+    // would sit in fixed positions, and a `sort` with a Math.random comparator
+    // would be both biased and non-secure.
+    for (let i = res.length - 1; i > 0; i--) {
+        const j = cryptoRandomInt(i + 1);
+        [res[i], res[j]] = [res[j], res[i]];
+    }
+    return res.join('');
 }
 
 // Default location of the encrypted vault archive (shared with the schema
@@ -753,7 +794,7 @@ export class PasswordVaultManager {
     _generateId(seen = new Set()) {
         let id;
         do {
-            id = `service_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+            id = `service_${Date.now()}_${cryptoRandomInt(1000000000)}`;
         } while (seen.has(id));
         return id;
     }
