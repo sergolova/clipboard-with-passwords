@@ -649,7 +649,8 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                         this.vaultManager.setRecentService(item);
                         await this.vaultManager.updateService(item.id, savedData);
                     } else {
-                        await this.vaultManager.addService(savedData);
+                        let newItem = await this.vaultManager.addService(savedData);
+                        this.vaultManager.setRecentService(newItem);
                     }
                     if (this.refreshCallback) this.refreshCallback();
                 } catch (e) {
