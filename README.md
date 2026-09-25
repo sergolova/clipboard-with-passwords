@@ -399,7 +399,7 @@ Compared to the original extension, these settings were added (all are
 the original extension might add later):
 
 <p align="center">
-  <img src="screenshots/settings.png" alt="Extension settings window" height="600"/>
+  <img src="screenshots/settings.png" alt="Extension settings window" height="900"/>
 </p>
 
 | Key | Type | Default | Description |
