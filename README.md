@@ -30,7 +30,7 @@ Type-based coloring can be turned off in the settings («Colorize clipboard cont
 
 Image previews: see the dedicated [🖼️ Image previews](#image-previews) section below.
 
-For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed`.
+For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed` (see [Network access](SECURITY.md#network-access)).
 
 <a name="image-previews"></a>
 
@@ -65,8 +65,9 @@ Pinned (favorite) text items can be **masked** with a single click (`Apply priva
 
 > ⚠️ **«Add vault copies to clipboard history»** — everything copied from the
 > vault (*logins, passwords, custom fields, «copy all»*) is also added to the
-> visible clipboard list. That list is stored in plain text, so **this is
-> insecure** — keep it off unless you fully understand the risk. Default: off.
+> visible clipboard list. That list is stored in plain text — this is
+> **insecure** by definition (see [Clipboard & history](SECURITY.md#clipboard-history)).
+> Default: off.
 
 > 🧹 **Auto-clear after vault copy (default: on, 20 s)** — a secret copied from
 > the vault is wiped from the system clipboard after a short delay, *provided
@@ -181,8 +182,8 @@ cp -r /tmp/clipboard-with-passwords/clipboard-with-passwords-clipboard-with-pass
 > 🛡️ **Verify what you are downloading.** `curl` fetches the ZIP over HTTPS and
 > unpacks it, but nothing else protects you from a tampered archive — compare
 > the file size against the ZIP from GitHub's web UI, or `sha256sum` it against
-> a value only you trust. Untrusted content executing inside your GNOME Shell
-> runs with your user's privileges.
+> a value only you trust. Code you install runs with **your user's privileges**
+> (see [Trust model](SECURITY.md#trust-model)).
 
 ### 🧑💻 For development (symlink to a source checkout)
 
@@ -217,21 +218,11 @@ extension in **GNOME Extensions** (or with
 
 The vault is a standard encrypted archive (ZIP by default) containing a single `data.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
-Keep the archive file (e.g. `storage.zip`) in a **protected location** — do not put it in
-a world-readable directory. The extension hardens permissions automatically: a freshly
-created vault directory gets `0700` (pre-existing directories are left as they are), and
-the archive and its `.bak` are chmod'ed to `0600` after every save, so other local users
-cannot read (and offline-crack) the encrypted vault.
 
-> 🔐 **The master password is never passed on the 7z command line.** The vault
-> hands it to `7z` through the process's **stdin** (and the `-p` switch without a
-> value), so it never shows up in the process list (`ps aux` / `journalctl`).
-
-> 🔒 **Archives are encrypted with AES-256.** ZIP: `-mem=AES256` (WinZip AES,
-> PBKDF2-HMAC-SHA1) — not the legacy ZipCrypto algorithm. 7z: native AES-256
-> with encrypted headers. Archives created by older versions of the extension
-> (ZipCrypto) continue to open normally and are re-encrypted to AES-256 at the
-> next save. Note: classic Info-ZIP `unzip` cannot read AES-encrypted ZIPs —
+> 🔐 **How the vault is protected** — AES-256 encryption, master-password
+> handling (never on the command line), file permissions, the crypto trade-off
+> and the trust model — is documented in **[SECURITY.md](SECURITY.md)**.
+> One practical note: classic Info-ZIP `unzip` cannot read AES-encrypted ZIPs —
 > use `7z`/`7za` (as documented below), WinRAR or Explorer.
 
 ### 📦 Archive format: ZIP or 7z
