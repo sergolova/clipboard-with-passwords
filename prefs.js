@@ -3,13 +3,33 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import { PrefsFields, DEFAULT_VAULT_PATH } from './constants.js';
+import { PrefsFields, DEFAULT_VAULT_PATH, DEFAULT_VAULT_PATH_7Z } from './constants.js';
+
+// The vault-format notice under the path entry is a live status message, not
+// a normal settings row: it is glued to the entry (no separator line between
+// them), tinted so it reads as feedback instead of a regular row, and the
+// state icon sits on the left. The classes are toggled in
+// `_updateVaultFormatStatus()`.
+const VAULT_STATUS_CSS = `
+row.vault-path-row { border-bottom: none; }
+row.vault-status-row { background-color: alpha(@accent_bg_color, 0.10); }
+row.vault-status-row.vault-status-warning { background-color: alpha(@warning_bg_color, 0.16); }
+.vault-status-icon { color: @accent_color; }
+.vault-status-warning .vault-status-icon { color: @warning_color; }
+`;
 
 export default class ClipboardIndicatorPreferences extends ExtensionPreferences {
     fillPreferencesWindow (window) {
         window._settings = this.getSettings();
-        const settingsUI = new Settings(window._settings);
+        // Load the styles shaping the vault-format notice before any widget is
+        // built, so the classes take effect on the first layout.
+        const cssProvider = new Gtk.CssProvider();
+        cssProvider.load_from_string(VAULT_STATUS_CSS);
+        Gtk.StyleContext.add_provider_for_display(
+            window.get_display(), cssProvider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+        const settingsUI = new Settings(window._settings, window);
 
         const tabs = [
             { title: _('UI'),            iconName: 'view-grid-symbolic',               groups: [settingsUI.ui, settingsUI.item_actions] },
@@ -34,8 +54,11 @@ export default class ClipboardIndicatorPreferences extends ExtensionPreferences 
 }
 
 class Settings {
-    constructor (schema) {
+    constructor (schema, window) {
         this.schema = schema;
+        // Parent window for modal dialogs (the file chooser); may be null
+        // when the prefs page is embedded without one.
+        this.window = window || null;
 
         this.field_size = new Adw.SpinRow({
             title: _("History Size"),
@@ -293,9 +316,70 @@ class Settings {
             title: _("Password Vault File Path"),
             text: this.schema.get_string(PrefsFields.PASSWORD_VAULT_PATH) || DEFAULT_VAULT_PATH
         });
+        // The format notice below is glued to this row: its separator (the
+        // row's bottom border) is suppressed via `vault-path-row`.
+        this.field_password_vault_path.add_css_class('vault-path-row');
         this.field_password_vault_path.connect('changed', (row) => {
             this.schema.set_string(PrefsFields.PASSWORD_VAULT_PATH, row.get_text());
+            this._updateVaultFormatStatus();
         });
+
+        // Pick the vault file with the system file chooser instead of typing
+        // the path by hand — handy after restoring a backup or switching to
+        // an existing archive. The chosen local path goes straight into the
+        // entry, so the 'changed' handler above persists it and refreshes the
+        // detected-format status row.
+        const browseButton = new Gtk.Button({
+            icon_name: 'document-open-symbolic',
+            valign: Gtk.Align.CENTER,
+            tooltip_text: _('Browse…')
+        });
+        browseButton.add_css_class('flat');
+        browseButton.connect('clicked', () => this._browseVaultPath());
+        this.field_password_vault_path.add_suffix(browseButton);
+
+        this.field_vault_format_7z = new Adw.SwitchRow({
+            title: _("Use 7z vault format"),
+            subtitle: _("The 7z format (AES-256) encrypts the archive headers, hiding the stored file name and sizes; it can be opened only with 7-Zip. ZIP stays portable but reveals them. An existing vault is converted, and its file renamed to match (.zip ↔ .7z), the next time it is opened with the master password.")
+        });
+        this.field_vault_format_7z.connect('notify::active', () => {
+            // Keep the *default* file name honest: switching the format with
+            // the untouched default path and no archive created there yet
+            // renames the effective default to storage.7z (and back). If the
+            // path was customized, or an archive already exists there, leave
+            // it alone — the extension aligns the archive name to its format
+            // the next time the vault is opened.
+            const on = this.field_vault_format_7z.active;
+            const from = on ? DEFAULT_VAULT_PATH : DEFAULT_VAULT_PATH_7Z;
+            const to = on ? DEFAULT_VAULT_PATH_7Z : DEFAULT_VAULT_PATH;
+            const shown = this.field_password_vault_path.get_text();
+            if (shown === from) {
+                const resolved = from.startsWith('~')
+                    ? GLib.get_home_dir() + from.slice(1)
+                    : from;
+                if (!Gio.File.new_for_path(resolved).query_exists(null)) {
+                    this.field_password_vault_path.set_text(to);
+                }
+            }
+            this._updateVaultFormatStatus();
+        });
+
+        // Live status of the vault archive at the path above. It doubles as
+        // the separator-less continuation of the path row: colored state icon
+        // on the *left* (prefix), tinted background that flips between info
+        // and warning in `_updateVaultFormatStatus()`.
+        this.field_vault_format_status = new Adw.ActionRow({
+            title: '',
+            subtitle: ''
+        });
+        this.field_vault_format_status_icon = new Gtk.Image({
+            icon_name: 'dialog-information-symbolic',
+            valign: Gtk.Align.CENTER
+        });
+        this.field_vault_format_status_icon.add_css_class('vault-status-icon');
+        this.field_vault_format_status.add_prefix(this.field_vault_format_status_icon);
+        this.field_vault_format_status.add_css_class('vault-status-row');
+        this._updateVaultFormatStatus();
 
         this.field_vault_pin_recent = new Adw.SwitchRow({
             title: _("Pin last used service card"),
@@ -354,23 +438,27 @@ class Settings {
 
         this.field_vault_requirements_warning = new Adw.ActionRow({
             title: _('Required: 7-Zip (7z or 7za)'),
-            subtitle: _('The vault is an encrypted ZIP archive. To open and save it the extension needs 7-Zip: install p7zip-full (7z) or p7zip (7za). Keep the archive file in a protected location.'),
+            subtitle: _('The vault is an encrypted archive (ZIP or 7z). To open and save it the extension needs 7-Zip: install p7zip-full (7z) or p7zip (7za). Keep the archive file in a protected location.'),
             activatable: false,
             selectable: false
         });
         this.field_vault_requirements_warning.add_prefix(new Gtk.Image({ iconName: 'dialog-warning-symbolic' }));
 
         this.password_vault.add(this.field_vault_requirements_warning);
+        // Basic Settings
         this.password_vault.add(this.field_vault_enabled);
+        this.password_vault.add(this.field_vault_format_7z);
         this.password_vault.add(this.field_password_vault_path);
+        this.password_vault.add(this.field_vault_format_status);
+        this.password_vault.add(this.field_vault_password_request);
+        // Additional Settings
+        this.password_vault.add(this.field_vault_clear_clipboard);
+        this.password_vault.add(this.field_vault_clear_clipboard_timeout);
         this.password_vault.add(this.field_vault_pin_recent);
         this.password_vault.add(this.field_vault_hide_all_category);
         this.password_vault.add(this.field_vault_hidden_edge_warning);
-        this.password_vault.add(this.field_vault_password_request);
         this.password_vault.add(this.field_vault_reset_search);
         this.password_vault.add(this.field_vault_copy_to_history);
-        this.password_vault.add(this.field_vault_clear_clipboard);
-        this.password_vault.add(this.field_vault_clear_clipboard_timeout);
 
         this.ui.add(this.field_preview_size);
         this.ui.add(this.field_confirm_clear_toggle);
@@ -467,6 +555,7 @@ class Settings {
         this.schema.bind(PrefsFields.VAULT_HIDE_ALL_CATEGORY, this.field_vault_hide_all_category, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_HIDDEN_EDGE_WARNING, this.field_vault_hidden_edge_warning, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_ENABLED, this.field_vault_enabled, 'active', Gio.SettingsBindFlags.DEFAULT);
+        this.schema.bind(PrefsFields.VAULT_FORMAT_7Z, this.field_vault_format_7z, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_COPY_TO_HISTORY, this.field_vault_copy_to_history, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_CLEAR_CLIPBOARD, this.field_vault_clear_clipboard, 'active', Gio.SettingsBindFlags.DEFAULT);
         this.schema.bind(PrefsFields.VAULT_CLEAR_CLIPBOARD_TIMEOUT, this.field_vault_clear_clipboard_timeout, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -517,6 +606,118 @@ class Settings {
             liststore.append(option)
         }
         return liststore;
+    }
+
+    // Open a system file chooser pre-positioned in the vault's directory, so
+    // the path can be picked (or restored from a backup) instead of typed.
+    // Only local files are accepted — resolveVaultPath() on the extension
+    // side works with filesystem paths, not URIs.
+    _browseVaultPath() {
+        const raw = (this.field_password_vault_path.get_text() || '').trim() || DEFAULT_VAULT_PATH;
+        const resolved = raw.startsWith('~') ? GLib.get_home_dir() + raw.slice(1) : raw;
+
+        const dialog = new Gtk.FileDialog({
+            title: _('Select the password vault file'),
+            modal: true
+        });
+        const parentDir = Gio.File.new_for_path(GLib.path_get_dirname(resolved));
+        if (parentDir.query_exists(null)) {
+            dialog.set_initial_folder(parentDir);
+        }
+
+        const window = this.window || null;
+        dialog.open(window, null, (dlg, res) => {
+            let file;
+            try {
+                file = dlg.open_finish(res);
+            } catch (e) {
+                return; // dialog dismissed / cancelled
+            }
+            const path = file.get_path();
+            if (path) {
+                this.field_password_vault_path.set_text(path);
+            }
+        });
+    }
+
+    // Report the *actual* state of the vault archive on disk: which container
+    // really sits in the file (decided by magic bytes, never by the name),
+    // whether the file name contradicts it, and what the selected format will
+    // do on the next unlock. This makes the "the extension answers to its
+    // content" promise visible in the settings UI.
+    _updateVaultFormatStatus() {
+        const raw = (this.field_password_vault_path.get_text() || '').trim() || DEFAULT_VAULT_PATH;
+        const resolved = raw.startsWith('~') ? GLib.get_home_dir() + raw.slice(1) : raw;
+        const file = Gio.File.new_for_path(resolved);
+        const exists = file.query_exists(null);
+        const format = exists ? this.#detectVaultFormat(resolved) : null;
+        const suffix = /\.(zip|7z)$/i.exec(resolved);
+        const nameFormat = suffix ? suffix[1].toLowerCase() : null;
+        const desired7z = this.field_vault_format_7z.active;
+
+        let title, subtitle, icon, stateClass;
+        if (!exists) {
+            title = _('No vault archive at this path yet');
+            subtitle = desired7z ? _('It will be created in 7z format.') : _('It will be created in ZIP format.');
+            icon = 'dialog-information-symbolic';
+            stateClass = 'vault-status-info';
+        } else if (format === null) {
+            title = _('The vault file is empty or not a readable archive');
+            subtitle = _('It is 0 bytes or its content is not ZIP/7z — restore it from the .bak file or a backup.');
+            icon = 'dialog-warning-symbolic';
+            stateClass = 'vault-status-warning';
+        } else if (nameFormat && nameFormat !== format) {
+            title = format === '7z'
+                ? _('Detected a 7z archive in a .zip file')
+                : _('Detected a ZIP archive in a .7z file');
+            subtitle = _('The archive is renamed to match its content the next time the vault is opened with the master password.');
+            icon = 'dialog-warning-symbolic';
+            stateClass = 'vault-status-warning';
+        } else {
+            title = format === '7z' ? _('Detected a 7z archive') : _('Detected a ZIP archive');
+            subtitle = (desired7z !== (format === '7z'))
+                ? (desired7z ? _('It will be converted to 7z the next time it is opened.') : _('It will be converted to ZIP the next time it is opened.'))
+                : '';
+            icon = 'dialog-information-symbolic';
+            stateClass = 'vault-status-info';
+        }
+
+        this.field_vault_format_status.set_title(title);
+        this.field_vault_format_status.set_subtitle(subtitle);
+        this.field_vault_format_status_icon.icon_name = icon;
+        this.field_vault_format_status.remove_css_class('vault-status-info');
+        this.field_vault_format_status.remove_css_class('vault-status-warning');
+        this.field_vault_format_status.add_css_class(stateClass);
+    }
+
+    // Identify the vault container from the archive's first bytes:
+    // PK\x03\x04 = ZIP, 37 7A BC AF 27 1C = 7z (plaintext even with header
+    // encryption). Returns 'zip' | '7z' | null (missing / unreadable / not an
+    // archive, e.g. a 0-byte file).
+    #detectVaultFormat(pathStr) {
+        const file = Gio.File.new_for_path(pathStr);
+        let stream;
+        try {
+            stream = file.read(null);
+            const head = stream.read_bytes(8, null).toArray();
+            if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b &&
+                head[2] === 0x03 && head[3] === 0x04) {
+                return 'zip';
+            }
+            if (head.length >= 6 && head[0] === 0x37 && head[1] === 0x7a &&
+                head[2] === 0xbc && head[3] === 0xaf && head[4] === 0x27 &&
+                head[5] === 0x1c) {
+                return '7z';
+            }
+            return null;
+        } catch (e) {
+            return null;
+        } finally {
+            try {
+                if (stream) stream.close(null);
+            } catch (e) {
+            }
+        }
     }
 
     #shortcuts = {

@@ -46,6 +46,7 @@ export const PrefsFields = {
     SHOW_PREVIEW_BUTTON             : 'show-preview-button',
     PREVIEW_ON_HOVER                : 'cwp-preview-on-hover',
     PASSWORD_VAULT_PATH             : 'cwp-password-vault-path',
+    VAULT_FORMAT_7Z                 : 'cwp-vault-format-7z',
     VAULT_ENABLED                   : 'cwp-vault-enabled',
     VAULT_COPY_TO_HISTORY           : 'cwp-vault-copy-to-history',
     VAULT_CLEAR_CLIPBOARD           : 'cwp-vault-clear-clipboard',
@@ -64,3 +65,8 @@ export const PrefsFields = {
 // the extension's defaults, docs or on-disk formats advertises that it stores
 // passwords; the JSON payload inside the archive is named "data.json".
 export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zip';
+
+// Effective default when the 7z format is selected and the vault path was
+// never customized (see prefs.js normalization): the extension then creates
+// `storage.7z` instead of `storage.zip` so the file name stays honest.
+export const DEFAULT_VAULT_PATH_7Z = '~/.config/clipboard-with-passwords/storage.7z';

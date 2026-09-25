@@ -78,6 +78,7 @@ let COLORIZE_CLIPBOARD = true;
 let FETCH_YOUTUBE_TITLES = false;
 let VAULT_ENABLED = true;
 let VAULT_COPY_TO_HISTORY = false;
+let VAULT_FORMAT_7Z = false;
 let VAULT_CLEAR_CLIPBOARD = true;
 let VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
 let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
@@ -237,6 +238,27 @@ const ClipboardIndicator = GObject.registerClass({
             logWarn('Clipboard Indicator: password-vault-path fallback used', e);
         }
         this.vaultManager = new PasswordVaultManager(vaultPath);
+        this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z);
+        // Keep the stored vault path in sync when the manager renames the
+        // archive to match its format (a .zip-named 7z archive becomes .7z),
+        // and tell the user what happened.
+        this.vaultManager.onVaultPathChanged = (newPath, info) => {
+            try {
+                this.extension.settings.set_string(PrefsFields.PASSWORD_VAULT_PATH, newPath);
+            } catch (e) {
+                logWarn('Failed to persist the renamed vault path:', e);
+            }
+            if (this._destroyed || !info) {
+                return;
+            }
+            if (info.converted) {
+                Main.notify(_('Password Vault'),
+                    _('The vault was converted to the selected archive format.') + '\n' + newPath);
+            } else if (info.renamed) {
+                Main.notify(_('Password Vault'),
+                    _('The vault archive was renamed to match its content.') + '\n' + newPath);
+            }
+        };
         this.ignoreNextClipboardChange = false;
         this.isVaultMode = false;
         this.keyboard = new Keyboard();
@@ -2210,6 +2232,11 @@ const ClipboardIndicator = GObject.registerClass({
         VAULT_ENABLED = settings.get_boolean(PrefsFields.VAULT_ENABLED);
         VAULT_COPY_TO_HISTORY = settings.get_boolean(PrefsFields.VAULT_COPY_TO_HISTORY);
         try {
+            VAULT_FORMAT_7Z = settings.get_boolean(PrefsFields.VAULT_FORMAT_7Z);
+        } catch (e) {
+            VAULT_FORMAT_7Z = false;
+        }
+        try {
             VAULT_PASSWORD_REQUEST = settings.get_string(PrefsFields.VAULT_PASSWORD_REQUEST);
         } catch (e) {
             VAULT_PASSWORD_REQUEST = 'session';
@@ -2235,6 +2262,18 @@ const ClipboardIndicator = GObject.registerClass({
         try {
             // Load the settings into variables
             this._fetchSettings();
+
+            // Keep the vault manager's desired archive container in sync with
+            // the settings (7z vs ZIP). When the user switches the format
+            // while the vault is still open, we already hold the master
+            // password — convert right away (and rename the file to match)
+            // instead of waiting for the next save or unlock.
+            this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z);
+            if (this.vaultManager.isFormatConversionPending()) {
+                this.vaultManager.alignVaultToContent().catch(err => {
+                    logError('Clipboard Indicator: vault format conversion failed', err);
+                });
+            }
 
             // If the vault got disabled while it was open, drop back to the
             // regular clipboard list.
@@ -2310,6 +2349,7 @@ const ClipboardIndicator = GObject.registerClass({
         if (vaultPath) {
             this.vaultManager.setZipPath(vaultPath);
         }
+        this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z);
 
         if (this.menu && this.menu.isOpen) {
             this.menu.close();

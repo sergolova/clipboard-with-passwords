@@ -215,7 +215,7 @@ extension in **GNOME Extensions** (or with
 
 ## 🔐 The vault archive
 
-The vault is a standard encrypted ZIP archive that contains a single `data.json` file.
+The vault is a standard encrypted archive (ZIP by default) containing a single `data.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
 Keep the archive file (e.g. `storage.zip`) in a **protected location** — do not put it in
 a world-readable directory. The extension hardens permissions automatically: a freshly
@@ -227,17 +227,52 @@ cannot read (and offline-crack) the encrypted vault.
 > hands it to `7z` through the process's **stdin** (and the `-p` switch without a
 > value), so it never shows up in the process list (`ps aux` / `journalctl`).
 
-> 🔒 **Archives are encrypted with AES-256** (`-mem=AES256`, WinZip AES,
-> PBKDF2-HMAC-SHA1) — not the legacy ZipCrypto algorithm. Archives created by
-> older versions of the extension (ZipCrypto) continue to open normally and
-> are re-encrypted to AES-256 at the next save. Note: classic Info-ZIP
-> `unzip` cannot read AES-encrypted ZIPs — use `7z`/`7za` (as documented
-> below), WinRAR or Explorer.
+> 🔒 **Archives are encrypted with AES-256.** ZIP: `-mem=AES256` (WinZip AES,
+> PBKDF2-HMAC-SHA1) — not the legacy ZipCrypto algorithm. 7z: native AES-256
+> with encrypted headers. Archives created by older versions of the extension
+> (ZipCrypto) continue to open normally and are re-encrypted to AES-256 at the
+> next save. Note: classic Info-ZIP `unzip` cannot read AES-encrypted ZIPs —
+> use `7z`/`7za` (as documented below), WinRAR or Explorer.
+
+### 📦 Archive format: ZIP or 7z
+
+Both formats are always AES-256 encrypted, and the choice is in *Settings →
+Password Vault → «Use 7z vault format»*. The extension **answers to the
+content, not to the file name**: on every open it detects the actual container
+from the archive's magic bytes (`PK\x03\x04` = ZIP, `37 7A BC AF 27 1C` = 7z —
+visible even with encrypted headers) and operates on that format. A 7z archive
+stored in a `.zip`-named file is renamed to match (and the stored path in
+Settings follows), so the extension can never silently write a 7z archive into
+a file that claims to be ZIP.
+
+| | ZIP (default) | 7z |
+|---|---|---|
+| Portable | ✅ opens with any ZIP tool | ❌ 7-Zip only |
+| Hides the internal file name (`data.json`) and sizes | ❌ visible in the headers | ✅ encrypted headers |
+| Practical benefit | manual inspection/repair with any tool | nobody can learn *what* is stored or how big it is from the file alone |
+
+- **New vault** — created in the format selected in Settings; the archive name
+  follows the format from the very first byte (`storage.7z`, not a `.zip`-named
+  7z archive). A custom non-`.zip`/`.7z` name is kept as-is.
+- **Existing vault** — the format on disk is the source of truth. When you
+  switch the toggle, the vault is **converted the next time it is opened with
+  the master password**: the whole archive is rewritten in the new format and
+  renamed to match (`storage.zip` ↔ `storage.7z`); the stored path in Settings
+  is updated in the same step, and you get a notification.
+- **After a conversion** the old-format file remains next to the archive (its
+  `.bak` too) as a leftover copy — delete it once you have confirmed the new
+  archive opens.
+- **A freshly written archive is verified before it replaces the previous
+  one**: the extension checks the container magic and decrypts the new archive
+  back to exactly the JSON it just serialized. A `7z` run that died mid-write
+  (or a file that ended up 0 bytes, e.g. after a drive failure) can therefore
+  never overwrite a healthy vault — the previous archive and its `.bak` stay
+  intact and the save fails with a clear error.
 
 Working with the archive manually:
 
 ```bash
-# list the contents
+# list the contents (format is detected automatically)
 7z l ~/.config/clipboard-with-passwords/storage.zip
 
 # extract the JSON to the current directory (you will be prompted for the master password)
@@ -246,8 +281,11 @@ Working with the archive manually:
 # extract the JSON to stdout and save it
 7z x -so ~/.config/clipboard-with-passwords/storage.zip > data.json
 
-# write the file back into the archive (AES-256 encrypted)
+# write the file back into an AES-256 ZIP (the extension's default format)
 7z a -tzip -mem=AES256 -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.zip data.json
+
+# write the file back as 7z with encrypted headers
+7z a -t7z -mhe=on -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.7z data.json
 ```
 
 Each save also keeps a `.bak` copy of the previous archive next to it.
@@ -370,9 +408,10 @@ the original extension might add later):
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP archive |
+| `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP/7z archive (a folder icon at the end of the row opens a file chooser to pick the file instead of typing it) |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
+| `cwp-vault-format-7z` | boolean | `false` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and sizes; 7-Zip only) instead of the portable ZIP format. An existing vault converts the next time it is opened with the master password, and its file is renamed to match the format |
 | `cwp-vault-clear-clipboard` | boolean | `true` | Automatically clear the clipboard a short time after a vault copy — but *only* while it still holds exactly the copied value, so anything you copy afterwards is left alone |
 | `cwp-vault-clear-clipboard-timeout` | integer (s) | `20` | How many seconds a value copied from the vault stays in the clipboard before the auto-clear removes it (5–300) |
 | `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |

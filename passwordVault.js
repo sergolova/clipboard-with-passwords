@@ -58,6 +58,55 @@ export function resolveVaultPath(pathStr) {
     return pathStr;
 }
 
+// Magic bytes that identify archive containers — the *content* of the vault
+// file, never its name, is the source of truth. A 7z archive stored in a
+// `.zip`-named file is detected here and renamed to match, so the extension
+// always "answers to the content" it keeps. (The 7z signature is plaintext
+// even with header encryption enabled, and the PK\x03\x04 local-file header
+// is present on AES-encrypted ZIPs too.)
+const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
+const SEVENZ_MAGIC = [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c];
+
+export function detectArchiveFormat(pathStr) {
+    const file = Gio.File.new_for_path(pathStr);
+    if (!file.query_exists(null)) {
+        return null;
+    }
+    let stream;
+    try {
+        stream = file.read(null);
+        const head = stream.read_bytes(8, null).toArray();
+        if (head.length >= 4 &&
+            head[0] === ZIP_MAGIC[0] && head[1] === ZIP_MAGIC[1] &&
+            head[2] === ZIP_MAGIC[2] && head[3] === ZIP_MAGIC[3]) {
+            return 'zip';
+        }
+        if (head.length >= 6 && SEVENZ_MAGIC.every((b, i) => head[i] === b)) {
+            return '7z';
+        }
+        return null; // exists, but not a recognizable archive header
+    } catch (e) {
+        return null;
+    } finally {
+        try {
+            if (stream) stream.close(null);
+        } catch (e) {
+        }
+    }
+}
+
+// The canonical archive file name for a format: a path ending in `.zip` or
+// `.7z` (case-insensitive) has its suffix swapped to match the format. Any
+// other name (extension-less, `.dat`, …) is returned unchanged — it neither
+// claims nor contradicts a container, and the user's naming choice wins.
+export function canonicalFormatPath(pathStr, use7z) {
+    const suffix = /\.(zip|7z)$/i.exec(pathStr);
+    if (!suffix) {
+        return pathStr;
+    }
+    return pathStr.slice(0, -suffix[0].length) + (use7z ? '.7z' : '.zip');
+}
+
 // Archive backends to use for the encrypted ZIP vault, in order of
 // preference. The full `7z` (p7zip-full) is the primary backend; the
 // standalone `7za` (p7zip) is used as a fallback when `7z` is absent.
@@ -124,10 +173,72 @@ export class PasswordVaultManager {
         };
         this.unlocked = false;
         this.recentService = null;
+        // Operating container: what save() actually writes. Split from the
+        // *desired* format (the setting) so the manager can always answer to
+        // the content: after unlock this field mirrors the archive really on
+        // disk, and the file name is aligned to it.
+        this.archiveFormat7z = false;
+        this._desiredFormat7z = false;
+        // Optional callback wired by the extension: fired when the vault file
+        // is renamed / converted, so the stored path and the user-facing
+        // notification stay honest.
+        this.onVaultPathChanged = null;
     }
 
     setZipPath(pathStr) {
         this.zipPath = resolveVaultPath(pathStr);
+    }
+
+    // The user's *desired* container for the vault (settings toggle). ZIP =
+    // false (default, portable), 7z = true (encrypted headers). It steers
+    // what a fresh vault is created as and what a conversion produces; an
+    // existing vault is converted when `alignVaultToContent()` runs.
+    setArchiveFormat(use7z) {
+        this._desiredFormat7z = !!use7z;
+    }
+
+    // True when the vault is open and the on-disk format differs from the
+    // one selected in settings — i.e. a conversion should happen now.
+    isFormatConversionPending() {
+        return this.unlocked && this._desiredFormat7z !== this.archiveFormat7z;
+    }
+
+    // Make the on-disk archive "answer to its content": detect the actual
+    // container from the file bytes, rename the file so its name matches the
+    // format, and — when the user selected another format in settings —
+    // convert (rewrite the whole archive) in that format. Best-effort: a
+    // failure here never fails the unlock itself or destroys the previous
+    // archive; the next save / unlock retries the alignment.
+    async alignVaultToContent() {
+        const actual = detectArchiveFormat(this.zipPath) === '7z';
+        this.archiveFormat7z = actual;
+
+        const aligned = canonicalFormatPath(this.zipPath, actual);
+        if (aligned !== this.zipPath) {
+            if (GLib.rename(this.zipPath, aligned) < 0) {
+                logWarn('Failed to rename vault archive to match its format: ' + aligned);
+            } else {
+                this.zipPath = aligned;
+                this._notifyPathTransition({ renamed: true });
+            }
+        }
+
+        if (this._desiredFormat7z !== this.archiveFormat7z) {
+            const from = this.archiveFormat7z ? '7z' : 'ZIP';
+            this.archiveFormat7z = this._desiredFormat7z;
+            await this.save(); // rewrites the whole archive in the desired format
+            this._notifyPathTransition({ converted: true, from, to: this._desiredFormat7z ? '7z' : 'ZIP' });
+        }
+    }
+
+    _notifyPathTransition(info) {
+        if (this.onVaultPathChanged) {
+            try {
+                this.onVaultPathChanged(this.zipPath, info);
+            } catch (e) {
+                logWarn('Vault path transition callback failed:', e);
+            }
+        }
     }
 
     isUnlocked() {
@@ -155,6 +266,10 @@ export class PasswordVaultManager {
                 version: 1,
                 items: []
             };
+            // A freshly created vault uses the format selected in settings,
+            // and save() aligns the archive name to it (storage.7z, not a
+            // `.zip`-named 7z archive).
+            this.archiveFormat7z = this._desiredFormat7z;
             await this.save();
             return true;
         }
@@ -192,7 +307,7 @@ export class PasswordVaultManager {
         }
 
         return new Promise((resolve, reject) => {
-            proc.communicate_utf8_async(`${password}\n`, null, (proc, res) => {
+            proc.communicate_utf8_async(`${password}\n`, null, async (proc, res) => {
                 try {
                     const [, stdout, stderr] = proc.communicate_utf8_finish(res);
                     const status = proc.get_exit_status();
@@ -201,7 +316,7 @@ export class PasswordVaultManager {
                         // leak internal archive member names into the UI, which
                         // the user must never see.
                         if (stderr) logWarn('7z unlock stderr:', stderr.trim());
-                        reject(new Error(_('Wrong password or corrupted vault archive.')));
+                        reject(new Error(this._unlockFailureHint()));
                         return;
                     }
 
@@ -226,6 +341,16 @@ export class PasswordVaultManager {
                             (parsedData.items || []).map(it => this._sanitizeItem(it))
                         )
                     };
+                    // Align the on-disk archive with its content (rename to a
+                    // matching name, convert to the selected format) without
+                    // failing the unlock — the vault data is already loaded.
+                    // Awaited (not fire-and-forget) so a conversion save can
+                    // never race a save the user triggers right after unlock.
+                    try {
+                        await this.alignVaultToContent();
+                    } catch (err) {
+                        logWarn('Vault content alignment failed:', err);
+                    }
                     resolve(true);
                 } catch (e) {
                     reject(e);
@@ -240,6 +365,11 @@ export class PasswordVaultManager {
         }
 
         const zipFile = Gio.File.new_for_path(this.zipPath);
+        // The archive name always follows the container: if the active format
+        // is 7z but the path still ends in `.zip` (or vice versa), the new
+        // archive is written under the matching name and this.zipPath / the
+        // stored setting are updated after the atomic rename.
+        const targetPath = canonicalFormatPath(this.zipPath, this.archiveFormat7z);
 
         // Validate the target before touching anything, so misuse of the
         // "Password Vault File Path" setting surfaces as a clear error.
@@ -287,10 +417,11 @@ export class PasswordVaultManager {
             }
         };
 
+        let jsonStr;
         try {
             // Always serialize a sanitized copy so empty/false fields never
             // reappear in the stored JSON (e.g. after hand-editing a file).
-            const jsonStr = JSON.stringify({
+            jsonStr = JSON.stringify({
                 version: this.data.version || 1,
                 items: (this.data.items || []).map(it => this._sanitizeItem(it))
             }, null, 2);
@@ -317,7 +448,7 @@ export class PasswordVaultManager {
         // flow, which left a window where `this.zipPath` was missing or half
         // written. A unique name also keeps `7z a` from updating a stale tmp
         // archive, so the result always contains exactly one member.
-        const tmpArchivePath = this.zipPath + '.tmp-' + Date.now();
+        const tmpArchivePath = targetPath + '.tmp-' + Date.now();
         const tmpArchiveFile = Gio.File.new_for_path(tmpArchivePath);
         const cleanupTmpArchive = () => {
             try {
@@ -339,11 +470,18 @@ export class PasswordVaultManager {
                 // `-p` with no value makes 7-Zip read the password from
                 // stdin, so the master password never appears in argv /
                 // the process list.
-                // `-mem=AES256` (WinZip AES, PBKDF2-HMAC-SHA1) instead of the
-                // default ZipCrypto for `-tzip`, which is attackable via
-                // known-plaintext. The archive stays a standard encrypted
-                // ZIP, just encrypted with AES-256.
-                argv: [archiveBinary, 'a', '-tzip', '-mem=AES256', '-p', '-y', tmpArchivePath, dataJsonPath],
+                // ZIP (default): `-tzip -mem=AES256` (WinZip AES,
+                // PBKDF2-HMAC-SHA1) instead of the default ZipCrypto, which
+                // is attackable via known-plaintext. Portable — any ZIP tool
+                // can open the archive — but the member name ("data.json")
+                // and sizes are visible.
+                // 7z: `-t7z -mhe=on` — AES-256 with encrypted headers, so
+                // the member name and sizes stay hidden; readable only with
+                // 7-Zip (both `7z` and `7za` support it).
+                argv: [archiveBinary, 'a',
+                       this.archiveFormat7z ? '-t7z' : '-tzip',
+                       this.archiveFormat7z ? '-mhe=on' : '-mem=AES256',
+                       '-p', '-y', tmpArchivePath, dataJsonPath],
                 flags: Gio.SubprocessFlags.STDIN_PIPE |
                        Gio.SubprocessFlags.STDOUT_PIPE |
                        Gio.SubprocessFlags.STDERR_PIPE
@@ -370,24 +508,55 @@ export class PasswordVaultManager {
                         reject(new Error(_('Failed to update the password vault archive.')));
                         return;
                     }
-                    // `7z a` creates/recreates the archive with 0644/0664
-                    // (umask) — tighten it to 0600 so other local users
-                    // cannot read (and offline-crack) the encrypted vault.
-                    try {
-                        tmpArchiveFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
-                    } catch (chmodErr) {
-                        logWarn('Failed to tighten vault archive permissions:', chmodErr);
-                    }
-                    // Atomic replacement: same directory ⇒ same filesystem,
-                    // so GLib.rename cannot fail with EXDEV. On any other
-                    // failure the previous archive is left untouched.
-                    if (GLib.rename(tmpArchivePath, this.zipPath) < 0) {
+                    (async () => {
+                        // `7z a` creates/recreates the archive with 0644/0664
+                        // (umask) — tighten it to 0600 so other local users
+                        // cannot read (and offline-crack) the encrypted vault.
+                        try {
+                            tmpArchiveFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
+                        } catch (chmodErr) {
+                            logWarn('Failed to tighten vault archive permissions:', chmodErr);
+                        }
+
+                        // Verify the freshly packed archive *before* it can
+                        // replace the previous one: correct container magic,
+                        // and it decrypts back to exactly what we serialized.
+                        // A `7z a` that died mid-write or produced an empty /
+                        // truncated archive (e.g. a 0-byte file after a drive
+                        // hiccup) is caught here, and the previous archive +
+                        // .bak are left untouched.
+                        const verified = await this._verifyArchiveWrite(
+                            tmpArchivePath, this.archiveFormat7z, jsonStr);
+                        if (!verified) {
+                            cleanupTmpArchive();
+                            logWarn('Vault archive verification failed — previous archive kept.');
+                            reject(new Error(_('Failed to update the password vault archive.')));
+                            return;
+                        }
+
+                        // Atomic replacement: same directory ⇒ same filesystem,
+                        // so GLib.rename cannot fail with EXDEV. On any other
+                        // failure the previous archive is left untouched.
+                        if (GLib.rename(tmpArchivePath, targetPath) < 0) {
+                            cleanupTmpArchive();
+                            logWarn('Failed to atomically replace the vault archive.');
+                            reject(new Error(_('Failed to update the password vault archive.')));
+                            return;
+                        }
+                        if (targetPath !== this.zipPath) {
+                            // The archive now lives under a name that matches
+                            // its format: keep the manager and the stored
+                            // setting in sync so the next unlock does not look
+                            // for a fresh vault at the stale path.
+                            this.zipPath = targetPath;
+                            this._notifyPathTransition({ pathChanged: true });
+                        }
+                        resolve(true);
+                    })().catch(e => {
                         cleanupTmpArchive();
-                        logWarn('Failed to atomically replace the vault archive.');
-                        reject(new Error(_('Failed to update the password vault archive.')));
-                        return;
-                    }
-                    resolve(true);
+                        logWarn('Vault save tail failed:', e);
+                        reject(e);
+                    });
                 } catch (e) {
                     cleanupTmpArchive();
                     reject(e);
@@ -442,6 +611,70 @@ export class PasswordVaultManager {
         } catch (e) {
             return false;
         }
+    }
+
+    // Turn a failed decrypt / corrupt-archive error into a message that
+    // actually helps: an empty (0-byte) file — e.g. a save that died
+    // mid-write on a failing drive — gets an explicit "restore" hint, and a
+    // surviving `.bak` is pointed out so the user can recover manually.
+    _unlockFailureHint() {
+        let msg = _('Wrong password or corrupted vault archive.');
+        try {
+            const f = Gio.File.new_for_path(this.zipPath);
+            const size = f.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null)
+                .get_size();
+            if (size === 0) {
+                msg += '\n' + _('The vault file is empty (0 bytes). Restore it from the .bak file or a backup.');
+            } else if (Gio.File.new_for_path(this.zipPath + '.bak').query_exists(null)) {
+                msg += '\n' + _('A previous version exists as a .bak file next to the archive — restore it manually.');
+            }
+        } catch (e) {
+        }
+        return msg;
+    }
+
+    // Confirm that a freshly packed archive is (a) really the requested
+    // container (magic bytes in the header) and (b) decrypts back to exactly
+    // the JSON that was just serialized. Resolves false on any failure — the
+    // caller then keeps the previous archive instead of replacing it with a
+    // bad (possibly 0-byte) one.
+    _verifyArchiveWrite(archivePath, use7z, expectedJson) {
+        if (detectArchiveFormat(archivePath) !== (use7z ? '7z' : 'zip')) {
+            return Promise.resolve(false);
+        }
+        return new Promise(resolveVerify => {
+            const binary = resolveArchiveBinary();
+            if (!binary) {
+                resolveVerify(false);
+                return;
+            }
+            let proc;
+            try {
+                proc = new Gio.Subprocess({
+                    argv: [binary, 'x', '-so', archivePath],
+                    flags: Gio.SubprocessFlags.STDIN_PIPE |
+                           Gio.SubprocessFlags.STDOUT_PIPE |
+                           Gio.SubprocessFlags.STDERR_PIPE
+                });
+                proc.init(null);
+            } catch (e) {
+                resolveVerify(false);
+                return;
+            }
+            proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc2, res) => {
+                try {
+                    const [, stdout, stderr] = proc2.communicate_utf8_finish(res);
+                    if (proc2.get_exit_status() !== 0) {
+                        if (stderr) logWarn('7z verify stderr:', stderr.trim());
+                        resolveVerify(false);
+                        return;
+                    }
+                    resolveVerify(stdout === expectedJson);
+                } catch (e) {
+                    resolveVerify(false);
+                }
+            });
+        });
     }
 
     getCategories() {
