@@ -240,9 +240,9 @@ a file that claims to be ZIP.
 
 | | ZIP (compatibility) | 7z (default) |
 |---|---|---|
-| Portable | ✅ opens with any ZIP tool | ❌ 7-Zip only |
-| Hides the internal file name (`data.json`) and sizes | ❌ visible in the headers | ✅ encrypted headers |
-| Practical benefit | manual inspection/repair with any tool | nobody can learn *what* is stored or how big it is from the file alone |
+| Portable | ✅ opens with any ZIP tool | requires an application with 7z support (this extension uses system 7-Zip) |
+| Hides the internal file name (`data.json`) and sizes | ❌ visible in the headers | ✅ encrypted headers hide member names and per-entry metadata; total archive size remains visible |
+| Practical benefit | manual inspection/repair with any tool | 7z encrypted headers hide the internal member names and per-entry metadata such as file sizes; the total archive file size remains visible |
 
 - **New vault** — created in the format selected in Settings, and for a fresh
   installation that default is **7z** (ZIP remains available as an explicit
@@ -276,11 +276,11 @@ Working with the archive manually:
 # extract the JSON to stdout and save it
 7z x -so ~/.config/clipboard-with-passwords/storage.zip > data.json
 
-# write the file back into an AES-256 ZIP (the extension's default format)
-7z a -tzip -mem=AES256 -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.zip data.json
+# write the file back into an AES-256 ZIP (compatibility format)
+7z a -tzip -mem=AES256 data.json
 
-# write the file back as 7z with encrypted headers
-7z a -t7z -mhe=on -p"YOUR_MASTER_PASSWORD" ~/.config/clipboard-with-passwords/storage.7z data.json
+# write the file back as 7z with encrypted headers (the extension's default format)
+7z a -t7z -mhe=on data.json
 ```
 
 Each save also keeps a `.bak` copy of the previous archive next to it.
@@ -288,9 +288,11 @@ Each save also keeps a `.bak` copy of the previous archive next to it.
 Saves are **atomic**: the archive is first written to a temporary file next to
 it (`storage.zip.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
 renamed over the target with `GLib.rename`. A crash or power loss in the middle
-of a save leaves the previous archive (and its `.bak`) intact — never a
-half-written `storage.zip`. Temporary leftovers of a save that died mid-way are
-removed automatically the next time the vault is opened or saved.
+of a save leaves the previous archive (and its `.bak`) intact — the archive
+is first written to a temporary file and then atomically replaced, so a
+partial write can never overwrite the live vault. Temporary leftovers of a
+save that died mid-way are removed automatically the next time the vault is
+opened or saved.
 
 ### Example `data.json`
 
