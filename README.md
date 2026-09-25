@@ -137,11 +137,13 @@ Dialog buttons (service edit dialog):
 
 - **GNOME Shell 46 – 50**
 - **7-Zip** — used to encrypt and decrypt the vault archive. The extension looks
-  for the `7z` command first, then falls back to `7za` (both work with the encrypted
-  ZIP format; `7zr` does **not** support ZIP and is ignored).
-  - Ubuntu / Debian: `sudo apt install p7zip-full` (provides `7z`; `p7zip` provides `7za`)
+  for the `7z` command first, then falls back to `7za` and `7zz` (all three work
+  with the encrypted ZIP and 7z formats; `7zr` does **not** support ZIP and is
+  ignored).
+  - Ubuntu / Debian: `sudo apt install 7zip` (modern releases, provides `7zz`);
+    on older releases `sudo apt install p7zip-full` (provides `7z` and `7za`)
   - Fedora: `sudo dnf install p7zip` (provides `7za` and `7zr`)
-  - Arch Linux: `sudo pacman -S p7zip` (provides `7z` and `7za`)
+  - Arch Linux: `sudo pacman -S 7zip` (provides `7zz`) or `p7zip` (provides `7z` and `7za`)
 - Paste buttons inside dialogs work on **X11** (on Wayland the standard clipboard flow is used).
 
 ## Installation
@@ -236,15 +238,17 @@ stored in a `.zip`-named file is renamed to match (and the stored path in
 Settings follows), so the extension can never silently write a 7z archive into
 a file that claims to be ZIP.
 
-| | ZIP (default) | 7z |
+| | ZIP (compatibility) | 7z (default) |
 |---|---|---|
 | Portable | ✅ opens with any ZIP tool | ❌ 7-Zip only |
 | Hides the internal file name (`data.json`) and sizes | ❌ visible in the headers | ✅ encrypted headers |
 | Practical benefit | manual inspection/repair with any tool | nobody can learn *what* is stored or how big it is from the file alone |
 
-- **New vault** — created in the format selected in Settings; the archive name
-  follows the format from the very first byte (`storage.7z`, not a `.zip`-named
-  7z archive). A custom non-`.zip`/`.7z` name is kept as-is.
+- **New vault** — created in the format selected in Settings, and for a fresh
+  installation that default is **7z** (ZIP remains available as an explicit
+  portability choice); the archive name follows the format from the very first
+  byte (`storage.7z`, not a `.zip`-named 7z archive). A custom
+  non-`.zip`/`.7z` name is kept as-is.
 - **Existing vault** — the format on disk is the source of truth. When you
   switch the toggle, the vault is **converted the next time it is opened with
   the master password**: the whole archive is rewritten in the new format and
@@ -403,7 +407,7 @@ the original extension might add later):
 | `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP/7z archive (a folder icon at the end of the row opens a file chooser to pick the file instead of typing it) |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
-| `cwp-vault-format-7z` | boolean | `false` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and sizes; 7-Zip only) instead of the portable ZIP format. An existing vault converts the next time it is opened with the master password, and its file is renamed to match the format |
+| `cwp-vault-format-7z` | boolean | `true` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and sizes; 7-Zip only) instead of the portable ZIP format. A new vault is created in this format by default; an existing archive keeps its current format until you switch it explicitly in Settings — the conversion then happens the next time the vault is opened with the master password, and the file is renamed to match (its old `.bak` stays as a recovery copy) |
 | `cwp-vault-clear-clipboard` | boolean | `true` | Automatically clear the clipboard a short time after a vault copy — but *only* while it still holds exactly the copied value, so anything you copy afterwards is left alone |
 | `cwp-vault-clear-clipboard-timeout` | integer (s) | `20` | How many seconds a value copied from the vault stays in the clipboard before the auto-clear removes it (5–300) |
 | `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |

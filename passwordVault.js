@@ -8,10 +8,12 @@ import {
     MAX_VAULT_ITEMS,
     MAX_FIELD_LENGTH,
     MAX_EXTRA_FIELDS,
-    STALE_TEMP_MIN_AGE_MS
+    STALE_TEMP_MIN_AGE_MS,
+    SEVENZ_TIMEOUT_MS
 } from './constants.js';
 import { logWarn } from './logging.js';
 import { cryptoRandomInt, setEntropySource } from './random.js';
+import { streamStdoutWithLimit } from './stdoutReader.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
 // translated word (e.g. 'Все'/'All'): such a word could collide with a real
@@ -158,10 +160,12 @@ export function canonicalFormatPath(pathStr, use7z) {
 
 // Archive backends to use for the encrypted ZIP vault, in order of
 // preference. The full `7z` (p7zip-full) is the primary backend; the
-// standalone `7za` (p7zip) is used as a fallback when `7z` is absent.
+// standalone `7za` (p7zip) is used as a fallback, and `7zz` (the standalone
+// official 7-Zip, package `7zip` on modern Debian/Ubuntu/Arch) is probed
+// last for systems that only ship that binary.
 // `7zr` is deliberately NOT probed: it only understands the native .7z
 // format and reports "Unsupported archive type" for ZIP archives.
-const ARCHIVE_BINARIES = ['7z', '7za'];
+const ARCHIVE_BINARIES = ['7z', '7za', '7zz'];
 
 // System locations checked *before* the user's PATH. The PATH of a shell
 // session can be tampered with (a fake `7z` earlier in the search order
@@ -170,8 +174,10 @@ const ARCHIVE_BINARIES = ['7z', '7za'];
 const ARCHIVE_BINARY_PATHS = [
     '/usr/bin/7z',
     '/usr/bin/7za',
+    '/usr/bin/7zz',
     '/bin/7z',
     '/bin/7za',
+    '/bin/7zz',
 ];
 
 // Cached so we don't re-probe PATH on every unlock/save. Only a *found*
@@ -212,6 +218,19 @@ function resolveArchiveBinary() {
     return null;
 }
 
+// Bytes → UTF-8 string for the decrypted vault payload (unlock) and the
+// post-save verify round-trip. TextDecoder is available in the shell's gjs
+// (1.72+, mozjs) — it is the same engine the stdoutReader harness runs
+// against. A malformed payload does not throw here: it produces U+FFFD and
+// fails the JSON.parse / string comparison a step later, as before.
+function decodeUtf8(bytes) {
+    try {
+        return new TextDecoder().decode(bytes);
+    } catch (e) {
+        return '';
+    }
+}
+
 export class PasswordVaultManager {
     constructor(zipPath) {
         this.zipPath = resolveVaultPath(zipPath);
@@ -239,11 +258,23 @@ export class PasswordVaultManager {
     }
 
     // The user's *desired* container for the vault (settings toggle). ZIP =
-    // false (default, portable), 7z = true (encrypted headers). It steers
-    // what a fresh vault is created as and what a conversion produces; an
-    // existing vault is converted when `alignVaultToContent()` runs.
-    setArchiveFormat(use7z) {
+    // false (portable), 7z = true (encrypted headers). It steers what a fresh
+    // vault is created as and what a conversion produces; an existing vault is
+    // converted when `alignVaultToContent()` runs.
+    //
+    // W1: `userSet` tells whether the user explicitly picked a format (the
+    // key differs from its default). While they never chose one, an existing
+    // archive on disk stays the source of truth — a change of the *default*
+    // (7z going forward) must not silently convert legacy ZIP vaults. A vault
+    // that does not exist yet (new install) follows the setting/default.
+    setArchiveFormat(use7z, { userSet = true } = {}) {
         this._desiredFormat7z = !!use7z;
+        if (!userSet) {
+            const file = Gio.File.new_for_path(this.zipPath);
+            if (file.query_exists(null)) {
+                this._desiredFormat7z = detectArchiveFormat(this.zipPath) === '7z';
+            }
+        }
     }
 
     // True when the vault is open and the on-disk format differs from the
@@ -333,8 +364,8 @@ export class PasswordVaultManager {
         }
 
         // P1.3: cheap on-disk pre-check — stop archive bombs before 7-Zip even
-        // unpacks them. `communicate_utf8_async` buffers the entire stdout, so
-        // the archive size on disk is the earliest moment this can fail.
+        // unpacks them. The mid-stream byte cap (streamStdoutWithLimit, below)
+        // is the second line of defense once decompression starts.
         let archiveSize = 0;
         try {
             archiveSize = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null)
@@ -349,7 +380,7 @@ export class PasswordVaultManager {
 
         const archiveBinary = resolveArchiveBinary();
         if (!archiveBinary) {
-            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+            throw new Error(_('7-Zip (7z, 7za or 7zz) is not installed.') + '\n' + _('Install 7-Zip (7zip or p7zip-full) and restart the shell.'));
         }
 
         let proc;
@@ -367,74 +398,84 @@ export class PasswordVaultManager {
             proc.init(null);
         } catch (e) {
             // Gio.Subprocess throws when the binary cannot be spawned.
-            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+            throw new Error(_('7-Zip (7z, 7za or 7zz) is not installed.') + '\n' + _('Install 7-Zip (7zip or p7zip-full) and restart the shell.'));
         }
 
-        return new Promise((resolve, reject) => {
-            proc.communicate_utf8_async(`${password}\n`, null, async (proc, res) => {
-                try {
-                    const [, stdout, stderr] = proc.communicate_utf8_finish(res);
-                    const status = proc.get_exit_status();
-                    if (status !== 0) {
-                        // Raw 7-Zip stderr is only logged for debugging: it can
-                        // leak internal archive member names into the UI, which
-                        // the user must never see.
-                        if (stderr) logWarn('7z unlock stderr:', stderr.trim());
-                        reject(new Error(this._unlockFailureHint()));
-                        return;
-                    }
+        return streamStdoutWithLimit(proc, {
+            // W2 (P1.2): the byte ceiling is enforced MID-STREAM — the
+            // process is force-killed the moment stdout surpasses it, before
+            // the shell can ever buffer an archive bomb into memory.
+            maxBytes: MAX_VAULT_JSON_BYTES,
+            // W3 (P1.3): hard runtime ceiling — a hung 7-Zip cannot block the
+            // unlock flow forever.
+            timeoutMs: SEVENZ_TIMEOUT_MS,
+            // Send the master password via stdin, never argv.
+            input: `${password}\n`
+        }).then(async ({exitStatus, data, stderr}) => {
+            if (exitStatus !== 0) {
+                // Raw 7-Zip stderr is only logged for debugging: it can
+                // leak internal archive member names into the UI, which
+                // the user must never see.
+                if (stderr) logWarn('7z unlock stderr:', stderr.trim());
+                throw new Error(this._unlockFailureHint());
+            }
 
-                    // P1.3: the decompressed payload was already buffered by
-                    // communicate_utf8_async (mid-stream capping is a follow-up,
-                    // see task P1.3 step 3); refuse to JSON.parse anything that
-                    // hits the limit so allocation stays bounded.
-                    if (stdout.length > MAX_VAULT_JSON_BYTES) {
-                        reject(new Error(_('The vault archive contains too much data.')));
-                        return;
-                    }
+            // W2 step 2: streamStdoutWithLimit capped the BYTE count
+            // mid-stream; the UTF-16 check below is the semantic ceiling on
+            // the decoded string (for ASCII bytes ≥ chars; for multibyte
+            // payloads the byte cap was the stricter one — both are honouring
+            // the same MAX_VAULT_JSON_BYTES bound).
+            const stdout = decodeUtf8(data);
+            if (stdout.length > MAX_VAULT_JSON_BYTES) {
+                throw new Error(_('The vault archive contains too much data.'));
+            }
 
-                    let parsedData;
-                    try {
-                        parsedData = JSON.parse(stdout);
-                    } catch (e) {
-                        reject(new Error(_('The vault archive does not contain valid JSON data.')));
-                        return;
-                    }
+            let parsedData;
+            try {
+                parsedData = JSON.parse(stdout);
+            } catch (e) {
+                throw new Error(_('The vault archive does not contain valid JSON data.'));
+            }
 
-                    // Validate + bound the payload BEFORE committing state: an
-                    // oversized or malformed archive must reject the unlock
-                    // without leaving the vault half-unlocked with stale data
-                    // (P1.3). Any _normalizeVaultData Error is already a
-                    // user-readable message, so it is passed through as-is.
-                    let normalized;
-                    try {
-                        normalized = this._normalizeVaultData(parsedData);
-                    } catch (e) {
-                        reject(e);
-                        return;
-                    }
-                    this.masterPassword = password;
-                    this.unlocked = true;
-                    this.data = normalized;
-                    // Align the on-disk archive with its content (rename to a
-                    // matching name, convert to the selected format) without
-                    // failing the unlock — the vault data is already loaded.
-                    // Awaited (not fire-and-forget) so a conversion save can
-                    // never race a save the user triggers right after unlock.
-                    try {
-                        await this.alignVaultToContent();
-                    } catch (err) {
-                        logWarn('Vault content alignment failed:', err);
-                    }
-                    // P2.2: a save that died mid-way (crash / kill / power loss)
-                    // leaves temp artifacts behind — clean up ours now that the
-                    // vault is unlocked, so read-only sessions also self-heal.
-                    this._cleanupStaleTemp();
-                    resolve(true);
-                } catch (e) {
-                    reject(e);
-                }
-            });
+            // Validate + bound the payload BEFORE committing state: an
+            // oversized or malformed archive must reject the unlock
+            // without leaving the vault half-unlocked with stale data
+            // (P1.3). Any _normalizeVaultData Error is already a
+            // user-readable message, so it is passed through as-is.
+            let normalized;
+            try {
+                normalized = this._normalizeVaultData(parsedData);
+            } catch (e) {
+                throw e;
+            }
+            this.masterPassword = password;
+            this.unlocked = true;
+            this.data = normalized;
+            // Align the on-disk archive with its content (rename to a
+            // matching name, convert to the selected format) without
+            // failing the unlock — the vault data is already loaded.
+            // Awaited (not fire-and-forget) so a conversion save can
+            // never race a save the user triggers right after unlock.
+            try {
+                await this.alignVaultToContent();
+            } catch (err) {
+                logWarn('Vault content alignment failed:', err);
+            }
+            // P2.2: a save that died mid-way (crash / kill / power loss)
+            // leaves temp artifacts behind — clean up ours now that the
+            // vault is unlocked, so read-only sessions also self-heal.
+            this._cleanupStaleTemp();
+            return true;
+        }).catch(e => {
+            // Map streamReader rejection codes to user-facing errors; anything
+            // else (JSON / normalize failures) already carries its message.
+            if (e && e.code === 'timeout')
+                throw new Error(_('7-Zip did not finish in time (timeout). Try again.'));
+            if (e && e.code === 'too-large')
+                throw new Error(_('The vault archive contains too much data.'));
+            if (e && e.code === 'read-error')
+                throw new Error(this._unlockFailureHint());
+            throw e;
         });
     }
 
@@ -544,7 +585,7 @@ export class PasswordVaultManager {
         if (!archiveBinary) {
             cleanupTmpArchive();
             cleanupTmp();
-            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+            throw new Error(_('7-Zip (7z, 7za or 7zz) is not installed.') + '\n' + _('Install 7-Zip (7zip or p7zip-full) and restart the shell.'));
         }
 
         let proc;
@@ -553,14 +594,14 @@ export class PasswordVaultManager {
                 // `-p` with no value makes 7-Zip read the password from
                 // stdin, so the master password never appears in argv /
                 // the process list.
-                // ZIP (default): `-tzip -mem=AES256` (WinZip AES,
+                // ZIP (compatibility): `-tzip -mem=AES256` (WinZip AES,
                 // PBKDF2-HMAC-SHA1) instead of the default ZipCrypto, which
                 // is attackable via known-plaintext. Portable — any ZIP tool
                 // can open the archive — but the member name ("data.json")
                 // and sizes are visible.
-                // 7z: `-t7z -mhe=on` — AES-256 with encrypted headers, so
-                // the member name and sizes stay hidden; readable only with
-                // 7-Zip (both `7z` and `7za` support it).
+                // 7z (default): `-t7z -mhe=on` — AES-256 with encrypted
+                // headers, so the member name and sizes stay hidden;
+                // reading it requires 7z support (`7z`, `7za` or `7zz`).
                 argv: [archiveBinary, 'a',
                        this.archiveFormat7z ? '-t7z' : '-tzip',
                        this.archiveFormat7z ? '-mhe=on' : '-mem=AES256',
@@ -573,78 +614,87 @@ export class PasswordVaultManager {
         } catch (e) {
             cleanupTmpArchive();
             cleanupTmp();
-            throw new Error(_('7-Zip (7z or 7za) is not installed.') + '\n' + _('Install 7-Zip (p7zip-full or p7zip) and restart the shell.'));
+            throw new Error(_('7-Zip (7z, 7za or 7zz) is not installed.') + '\n' + _('Install 7-Zip (7zip or p7zip-full) and restart the shell.'));
         }
 
-        return new Promise((resolve, reject) => {
-            proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc, res) => {
-                cleanupTmp();
+        return streamStdoutWithLimit(proc, {
+            // W3 (P1.3): a hung `7z a` must not block the save flow — same
+            // hard deadline as unlock/verify. `7z a` writes only a few banner
+            // lines to stdout; the cap is generous and only ever fires on a
+            // pathologically broken binary.
+            maxBytes: MAX_VAULT_ARCHIVE_BYTES,
+            timeoutMs: SEVENZ_TIMEOUT_MS,
+            input: `${this.masterPassword}\n`
+        }).then(async ({exitStatus, stderr}) => {
+            cleanupTmp();
 
-                try {
-                    const [, , stderr] = proc.communicate_utf8_finish(res);
-                    const status = proc.get_exit_status();
-                    if (status !== 0) {
-                        // Same as unlock(): raw stderr goes to the (gated) log
-                        // only, never into a user-facing message.
-                        if (stderr) logWarn('7z save stderr:', stderr.trim());
-                        cleanupTmpArchive();
-                        reject(new Error(_('Failed to update the password vault archive.')));
-                        return;
-                    }
-                    (async () => {
-                        // `7z a` creates/recreates the archive with 0644/0664
-                        // (umask) — tighten it to 0600 so other local users
-                        // cannot read (and offline-crack) the encrypted vault.
-                        try {
-                            tmpArchiveFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
-                        } catch (chmodErr) {
-                            logWarn('Failed to tighten vault archive permissions:', chmodErr);
-                        }
+            if (exitStatus !== 0) {
+                // Same as unlock(): raw stderr goes to the (gated) log
+                // only, never into a user-facing message.
+                if (stderr) logWarn('7z save stderr:', stderr.trim());
+                cleanupTmpArchive();
+                throw new Error(_('Failed to update the password vault archive.'));
+            }
 
-                        // Verify the freshly packed archive *before* it can
-                        // replace the previous one: correct container magic,
-                        // and it decrypts back to exactly what we serialized.
-                        // A `7z a` that died mid-write or produced an empty /
-                        // truncated archive (e.g. a 0-byte file after a drive
-                        // hiccup) is caught here, and the previous archive +
-                        // .bak are left untouched.
-                        const verified = await this._verifyArchiveWrite(
-                            tmpArchivePath, this.archiveFormat7z, jsonStr);
-                        if (!verified) {
-                            cleanupTmpArchive();
-                            logWarn('Vault archive verification failed — previous archive kept.');
-                            reject(new Error(_('Failed to update the password vault archive.')));
-                            return;
-                        }
+            // `7z a` creates/recreates the archive with 0644/0664
+            // (umask) — tighten it to 0600 so other local users
+            // cannot read (and offline-crack) the encrypted vault.
+            try {
+                tmpArchiveFile.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
+            } catch (chmodErr) {
+                logWarn('Failed to tighten vault archive permissions:', chmodErr);
+            }
 
-                        // Atomic replacement: same directory ⇒ same filesystem,
-                        // so GLib.rename cannot fail with EXDEV. On any other
-                        // failure the previous archive is left untouched.
-                        if (GLib.rename(tmpArchivePath, targetPath) < 0) {
-                            cleanupTmpArchive();
-                            logWarn('Failed to atomically replace the vault archive.');
-                            reject(new Error(_('Failed to update the password vault archive.')));
-                            return;
-                        }
-                        if (targetPath !== this.zipPath) {
-                            // The archive now lives under a name that matches
-                            // its format: keep the manager and the stored
-                            // setting in sync so the next unlock does not look
-                            // for a fresh vault at the stale path.
-                            this.zipPath = targetPath;
-                            this._notifyPathTransition({ pathChanged: true });
-                        }
-                        resolve(true);
-                    })().catch(e => {
-                        cleanupTmpArchive();
-                        logWarn('Vault save tail failed:', e);
-                        reject(e);
-                    });
-                } catch (e) {
-                    cleanupTmpArchive();
-                    reject(e);
-                }
-            });
+            // Verify the freshly packed archive *before* it can
+            // replace the previous one: correct container magic,
+            // and it decrypts back to exactly what we serialized.
+            // A `7z a` that died mid-write or produced an empty /
+            // truncated archive (e.g. a 0-byte file after a drive
+            // hiccup) is caught here, and the previous archive +
+            // .bak are left untouched.
+            const verified = await this._verifyArchiveWrite(
+                tmpArchivePath, this.archiveFormat7z, jsonStr);
+            if (!verified) {
+                cleanupTmpArchive();
+                logWarn('Vault archive verification failed — previous archive kept.');
+                throw new Error(_('Failed to update the password vault archive.'));
+            }
+
+            // Atomic replacement: same directory ⇒ same filesystem,
+            // so GLib.rename cannot fail with EXDEV. On any other
+            // failure the previous archive is left untouched.
+            if (GLib.rename(tmpArchivePath, targetPath) < 0) {
+                cleanupTmpArchive();
+                logWarn('Failed to atomically replace the vault archive.');
+                throw new Error(_('Failed to update the password vault archive.'));
+            }
+            if (targetPath !== this.zipPath) {
+                // The archive now lives under a name that matches
+                // its format: keep the manager and the stored
+                // setting in sync so the next unlock does not look
+                // for a fresh vault at the stale path.
+                this.zipPath = targetPath;
+                this._notifyPathTransition({ pathChanged: true });
+            }
+            return true;
+        }).catch(e => {
+            // A stream-level kill (timeout / stdout overflow) or any tail
+            // failure (chmod, verify, rename) all land here: the tmp archive
+            // and the plaintext JSON must never survive a failed save, and the
+            // user gets the generic save error (or the explicit timeout
+            // message) — never raw 7-Zip output.
+            cleanupTmp();
+            cleanupTmpArchive();
+            if (e && e.code === 'timeout')
+                throw new Error(_('7-Zip did not finish in time (timeout). Try again.'));
+            if (e && e.code === 'too-large')
+                throw new Error(_('Failed to update the password vault archive.'));
+            if (e && e.code === 'read-error') {
+                logWarn('7z save stream read error:', e);
+                throw new Error(_('Failed to update the password vault archive.'));
+            }
+            logWarn('Vault save tail failed:', e);
+            throw e;
         });
     }
 
@@ -831,38 +881,39 @@ export class PasswordVaultManager {
         if (detectArchiveFormat(archivePath) !== (use7z ? '7z' : 'zip')) {
             return Promise.resolve(false);
         }
-        return new Promise(resolveVerify => {
-            const binary = resolveArchiveBinary();
-            if (!binary) {
-                resolveVerify(false);
-                return;
-            }
-            let proc;
-            try {
-                proc = new Gio.Subprocess({
-                    argv: [binary, 'x', '-so', archivePath],
-                    flags: Gio.SubprocessFlags.STDIN_PIPE |
-                           Gio.SubprocessFlags.STDOUT_PIPE |
-                           Gio.SubprocessFlags.STDERR_PIPE
-                });
-                proc.init(null);
-            } catch (e) {
-                resolveVerify(false);
-                return;
-            }
-            proc.communicate_utf8_async(`${this.masterPassword}\n`, null, (proc2, res) => {
-                try {
-                    const [, stdout, stderr] = proc2.communicate_utf8_finish(res);
-                    if (proc2.get_exit_status() !== 0) {
-                        if (stderr) logWarn('7z verify stderr:', stderr.trim());
-                        resolveVerify(false);
-                        return;
-                    }
-                    resolveVerify(stdout === expectedJson);
-                } catch (e) {
-                    resolveVerify(false);
-                }
+        const binary = resolveArchiveBinary();
+        if (!binary) {
+            return Promise.resolve(false);
+        }
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv: [binary, 'x', '-so', archivePath],
+                flags: Gio.SubprocessFlags.STDIN_PIPE |
+                       Gio.SubprocessFlags.STDOUT_PIPE |
+                       Gio.SubprocessFlags.STDERR_PIPE
             });
+            proc.init(null);
+        } catch (e) {
+            return Promise.resolve(false);
+        }
+        return streamStdoutWithLimit(proc, {
+            maxBytes: MAX_VAULT_JSON_BYTES,
+            timeoutMs: SEVENZ_TIMEOUT_MS,
+            input: `${this.masterPassword}\n`
+        }).then(({exitStatus, data, stderr}) => {
+            if (exitStatus !== 0) {
+                if (stderr) logWarn('7z verify stderr:', stderr.trim());
+                return false;
+            }
+            // Same decode as unlock: byte cap already enforced mid-stream;
+            // the string comparison is exact (===), never a prefix check.
+            return decodeUtf8(data) === expectedJson;
+        }).catch(e => {
+            // Timeout / overflow / pipe failure on the *fresh tmp archive*
+            // also means "not verified": the previous archive stays in place.
+            logWarn('7z verify failed:', e);
+            return false;
         });
     }
 

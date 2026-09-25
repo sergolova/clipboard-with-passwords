@@ -184,9 +184,9 @@
       <summary>Add everything copied from the vault to the visible clipboard history. WARNING: this stores passwords and logins in the plain-text clipboard list, which is insecure. Keep it off unless you understand the risk.</summary>
     </key>
     <key name="cwp-vault-format-7z" type="b">
-      <default>false</default>
+      <default>true</default>
       <summary>Store the password vault archive in the 7z format with encrypted headers</summary>
-      <description>When enabled, the vault archive is created and updated as a 7z archive with header encryption (AES-256), so the internal file name and the stored sizes stay hidden. The archive is then readable only with 7-Zip. When disabled (default), the portable ZIP format is used, which any ZIP tool can open but which reveals the member name and size. An existing vault is converted on the next save.</description>
+      <description>When enabled (default), the vault archive is created and updated as a 7z archive with header encryption (AES-256), so the internal file name and per-entry sizes stay hidden while the total archive file size remains visible. Opening the archive requires an application with 7z support — this extension uses the system 7-Zip. When disabled, the portable ZIP format (WinZip AES) is used, which any ZIP tool can open but which reveals the member name and size. An existing archive keeps its current format until the format is chosen explicitly in the extension settings; the conversion then happens when the vault is next opened with the master password, and the old-format file stays next to the archive as a recovery copy.</description>
     </key>
     <key name="cwp-vault-clear-clipboard" type="b">
       <default>true</default>

@@ -340,7 +340,7 @@ class Settings {
 
         this.field_vault_format_7z = new Adw.SwitchRow({
             title: _("Use 7z vault format"),
-            subtitle: _("The 7z format (AES-256) encrypts the archive headers, hiding the stored file name and sizes; it can be opened only with 7-Zip. ZIP stays portable but reveals them. An existing vault is converted, and its file renamed to match (.zip ↔ .7z), the next time it is opened with the master password.")
+            subtitle: _("The 7z format (AES-256) encrypts the archive headers, hiding the internal file name and per-entry sizes; opening it requires an application with 7z support (this extension uses the system 7-Zip). ZIP stays portable but reveals them. A new vault is created in 7z by default; an existing archive keeps its current format until you switch it here — the conversion then happens the next time the vault is opened with the master password, and the file is renamed to match (.zip ↔ .7z).")
         });
         this.field_vault_format_7z.connect('notify::active', () => {
             // Keep the *default* file name honest: switching the format with
@@ -437,8 +437,8 @@ class Settings {
         this.password_vault = new Adw.PreferencesGroup({ title: _('Password Vault Settings') });
 
         this.field_vault_requirements_warning = new Adw.ActionRow({
-            title: _('Required: 7-Zip (7z or 7za)'),
-            subtitle: _('The vault is an encrypted archive (ZIP or 7z). To open and save it the extension needs 7-Zip: install p7zip-full (7z) or p7zip (7za). Keep the archive file in a protected location.'),
+            title: _('Required: 7-Zip (7z, 7za or 7zz)'),
+            subtitle: _('The vault is an encrypted archive (ZIP or 7z). To open and save it the extension needs 7-Zip: install 7zip (7zz), p7zip-full (7z) or p7zip (7za). Keep the archive file in a protected location.'),
             activatable: false,
             selectable: false
         });
@@ -654,6 +654,16 @@ class Settings {
         const suffix = /\.(zip|7z)$/i.exec(resolved);
         const nameFormat = suffix ? suffix[1].toLowerCase() : null;
         const desired7z = this.field_vault_format_7z.active;
+        // W1: while the user never explicitly chose a format (the key is at
+        // its default), an existing archive keeps the format it was created
+        // with — the disk is the source of truth and no silent conversion
+        // happens. Only the toggle flip itself requests a conversion.
+        let userSetFormat = true;
+        try {
+            userSetFormat = this.schema.get_user_value(PrefsFields.VAULT_FORMAT_7Z) !== null;
+        } catch (e) {
+            userSetFormat = false;
+        }
 
         let title, subtitle, icon, stateClass;
         if (!exists) {
@@ -675,9 +685,11 @@ class Settings {
             stateClass = 'vault-status-warning';
         } else {
             title = format === '7z' ? _('Detected a 7z archive') : _('Detected a ZIP archive');
-            subtitle = (desired7z !== (format === '7z'))
+            subtitle = ((desired7z !== (format === '7z')) && userSetFormat)
                 ? (desired7z ? _('It will be converted to 7z the next time it is opened.') : _('It will be converted to ZIP the next time it is opened.'))
-                : '';
+                : ((desired7z !== (format === '7z'))
+                    ? _('It keeps its current format — switch it in the settings to convert it on the next open.')
+                    : '');
             icon = 'dialog-information-symbolic';
             stateClass = 'vault-status-info';
         }

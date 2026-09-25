@@ -86,3 +86,10 @@ export const MAX_VAULT_ITEMS = 1000;                       // records per vault
 export const MAX_FIELD_LENGTH = 4096;                      // chars per string field (name, password, extra label/value, …)
 export const MAX_EXTRA_FIELDS = 32;                        // extra fields per item
 export const STALE_TEMP_MIN_AGE_MS = 60 * 1000;            // P2.2: temp artifacts younger than this are treated as live writes
+
+// W3 (P1.3): hard ceiling on how long a single `7z` subprocess may run for
+// before it is force-killed. 7-Zip on a small vault finishes in well under
+// a second; 60 s only ever fires on a hung / pathological binary, and a
+// force-kill then guarantees the unlock/save flow cannot block the shell
+// forever. Shared by unlock-extract, save-pack and post-save verify.
+export const SEVENZ_TIMEOUT_MS = 60 * 1000;
