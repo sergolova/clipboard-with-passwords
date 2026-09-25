@@ -789,11 +789,17 @@ export class PasswordVaultManager {
         return items;
     }
 
-    // P1.3: turn raw parsed-unlock payload into a bounded, trusted shape.
-    // Items count, per-field lengths and per-item extra-field count are capped
-    // (constants.js); version is coerced to a number. Any breach throws a
-    // user-readable Error. Called BEFORE the manager commits unlocked state,
-    // so a rejected payload never leaves the vault half-unlocked.
+    // P1.3 + P2.4: turn raw parsed-unlock payload into a bounded, trusted
+    // shape. The README explicitly allows hand-editing data.json, so the
+    // policy is two-sided:
+    //   * P1.3 caps (items count, per-field length, per-item extra-field
+    //     count) and an unsupported format version REJECT with a user-readable
+    //     Error — never silent truncation;
+    //   * P2.4 malformed TYPES are coerced and fixed (see _sanitizeItem),
+    //     non-object item entries are dropped — a broken hand-edit must not
+    //     lock the user out of the vault or crash with a raw TypeError.
+    // Called BEFORE the manager commits unlocked state, so a rejected payload
+    // never leaves the vault half-unlocked.
     _normalizeVaultData(parsed) {
         if (!parsed || typeof parsed !== 'object') {
             throw new Error(_('The vault archive contains invalid data.'));
@@ -804,9 +810,18 @@ export class PasswordVaultManager {
         if (parsed.items.length > MAX_VAULT_ITEMS) {
             throw new Error(_('The vault contains too many items (max 1000).'));
         }
-        const items = parsed.items.map(it => this._sanitizeItem(it));
+        const items = [];
+        for (const raw of parsed.items) {
+            const it = this._sanitizeItem(raw);
+            if (it) items.push(it); // non-object garbage is dropped, not fatal
+        }
+        const version = typeof parsed.version === 'number' ? parsed.version : 1;
+        if (version > 1) {
+            throw new Error(_('The vault archive uses an unsupported format version.'));
+        }
         return {
-            version: typeof parsed.version === 'number' ? parsed.version : 1,
+            // version < 1 / NaN → legacy default (old code treated 0 as 1)
+            version: version >= 1 ? version : 1,
             // Missing/duplicated ids (a common outcome of hand-editing data.json:
             // omitted id, or copy-pasted records) are made unique here — every
             // record survives, no card is lost.
@@ -816,15 +831,20 @@ export class PasswordVaultManager {
 
     // Build a minimal item object: empty/false fields are omitted entirely so
     // the stored JSON stays clean and easy to edit by hand or with other tools.
-    // Items coming from the outside (unlock / hand-edited JSON) are bounded by
-    // the P1.3 caps: a field longer than MAX_FIELD_LENGTH or more than
-    // MAX_EXTRA_FIELDS extra fields rejects the whole load instead of being
-    // silently truncated (cutting a password would corrupt it forever, and an
-    // archive bomb must fail loudly). Malformed item entries (null, string,
-    // array) also reject with a readable message instead of a raw TypeError.
+    //
+    // P2.4 — the README explicitly allows hand-editing data.json, so this
+    // COERCES AND FIXES malformed entries instead of crashing:
+    //   * a non-object entry (null / string / number / array) returns null —
+    //     _normalizeVaultData drops it, garbage carries no card data;
+    //   * name / id / category / description / login / password / extra
+    //     label&value are coerced to strings; updatedAt is kept only when it
+    //     is a finite number; isHidden is coerced to boolean;
+    //   * P1.3 caps still REJECT (never silent truncation): a field longer
+    //     than MAX_FIELD_LENGTH or more than MAX_EXTRA_FIELDS extra fields
+    //     rejects the whole load.
     _sanitizeItem(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) {
-            throw new Error(_('The vault archive contains invalid data.'));
+            return null;
         }
         const capField = (value) => {
             if (typeof value === 'string' && value.length > MAX_FIELD_LENGTH) {
@@ -832,28 +852,38 @@ export class PasswordVaultManager {
             }
             return value;
         };
+        // Coerce a value to a string, treating absent values as empty.
+        const str = (v) => (v === undefined || v === null) ? '' : String(v);
+        const optTrim = (v) => str(v).trim();
+
+        const rawId = str(data.id);
+        const name = str(data.name);
         const item = {
-            id: capField(data.id) || this._generateId(),
-            name: capField(data.name) || _('Untitled'),
-            updatedAt: data.updatedAt || Date.now()
+            id: rawId ? capField(rawId) : this._generateId(),
+            name: name ? capField(name) : _('Untitled'),
+            updatedAt: Number.isFinite(data.updatedAt) ? data.updatedAt : Date.now()
         };
-        if (data.category && data.category.trim()) item.category = capField(data.category.trim());
-        if (data.description && data.description.trim()) item.description = capField(data.description.trim());
-        if (data.login && data.login.trim()) item.login = capField(data.login.trim());
-        if (data.password) item.password = capField(data.password);
+        const category = optTrim(data.category);
+        if (category) item.category = capField(category);
+        const description = optTrim(data.description);
+        if (description) item.description = capField(description);
+        const login = optTrim(data.login);
+        if (login) item.login = capField(login);
+        const password = str(data.password);
+        if (password) item.password = capField(password);
         if (Array.isArray(data.extraFields)) {
+            // Non-object extra entries (null, strings…) are junk — skipped.
             const extras = data.extraFields
+                .filter(f => f && typeof f === 'object' && !Array.isArray(f))
                 .map(f => {
-                    if (!f || typeof f !== 'object' || Array.isArray(f)) {
-                        throw new Error(_('The vault archive contains invalid data.'));
-                    }
                     const e = {};
-                    if (f.label && f.label.trim()) e.label = capField(f.label.trim());
+                    const label = optTrim(f.label);
+                    if (label) e.label = capField(label);
                     // Keep the stored value verbatim (no trim): leading/trailing
                     // invisible junk must survive so the (opt-in) edge-warning
                     // icon in the card can flag it. Only the label is trimmed.
-                    if (f.value !== undefined && f.value !== null && String(f.value).trim() !== '') {
-                        e.value = capField(String(f.value));
+                    if (f.value !== undefined && f.value !== null && str(f.value).trim() !== '') {
+                        e.value = capField(str(f.value));
                     }
                     if (f.isHidden) e.isHidden = true;
                     return e;
@@ -900,6 +930,9 @@ export class PasswordVaultManager {
 
     async addService(itemData) {
         const item = this._sanitizeItem(itemData);
+        if (!item) {
+            throw new Error(_('The vault archive contains invalid data.'));
+        }
         // The edit dialog never submits an id, so this is defensive: never
         // let a freshly created record collide with an existing id.
         const ids = new Set(this.data.items.map(i => i.id));
@@ -919,7 +952,9 @@ export class PasswordVaultManager {
         const updated = this._sanitizeItem(
             { ...existing, ...updatedData, updatedAt: Date.now() }
         );
-
+        if (!updated) {
+            throw new Error(_('The vault archive contains invalid data.'));
+        }
         this.data.items[index] = updated;
 
         if (this.recentService && this.recentService.id === id) {
