@@ -2734,6 +2734,9 @@ const ClipboardIndicator = GObject.registerClass({
                 this.ignoreNextClipboardChange = true;
                 clipboard.set_text(CLIPBOARD_TYPE, '');
                 this.#updateIndicatorContent(null);
+                if (NOTIFY_ON_CLEAR) {
+                    this.notifications.show(_("Clipboard cleared"));
+                }
             });
         }, seconds * 1000);
     }
