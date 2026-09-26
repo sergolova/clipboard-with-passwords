@@ -9,6 +9,12 @@ import { generatePassword } from './passwordVault.js';
 import { themeColors } from './theme.js';
 import { logWarn } from './logging.js';
 
+// Soft floor for the live passphrase hint shown when a NEW vault is created
+// (T5, REMAINING_SECURITY_PLAN.md). Deliberately a guideline, not a hard
+// "weak/strong" verdict: the hint only reacts to length, it never rejects a
+// password and it performs no network or policy checks.
+const MASTER_PASSWORD_MIN_LENGTH = 8;
+
 // Button that inserts the CLIPBOARD text into `entry`:
 // - if the entry currently has key focus, inserts at the cursor (like Ctrl+V);
 // - otherwise replaces the whole field content.
@@ -46,7 +52,7 @@ function createPasteButton(entry) {
 export const MasterPasswordDialog = GObject.registerClass(
     {GTypeName: 'ClipboardWithPasswordsMasterPasswordDialog'},
     class MasterPasswordDialog extends ModalDialog.ModalDialog {
-        _init(title, message, callback) {
+        _init(title, message, callback, guidance = null) {
             super._init({ destroyOnClose: true });
 
             let mainBox = new St.BoxLayout({
@@ -88,6 +94,24 @@ export const MasterPasswordDialog = GObject.registerClass(
             });
             mainBox.add_child(this.errorLabel);
 
+            // T5 (REMAINING_SECURITY_PLAN.md): when this dialog CREATES the
+            // vault (fresh archive — first run or the file was deleted), the
+            // password typed here becomes the master password. Explain what
+            // makes a good one and that it can never be recovered. Regular
+            // unlock dialogs pass guidance=null and show no extra label; the
+            // live hint reacts to length only (see _updateGuidance).
+            if (guidance) {
+                this.guidanceLabel = new St.Label({
+                    style: `font-size: 11px; color: ${themeColors().secondary};`,
+                    x_align: Clutter.ActorAlign.CENTER,
+                    text: guidance
+                });
+                mainBox.add_child(this.guidanceLabel);
+                this.entry.clutter_text.connect('changed', () => {
+                    this._updateGuidance(guidance);
+                });
+            }
+
             // Connect Enter key
             this.entry.clutter_text.connect('activate', () => {
                 this._submit(callback);
@@ -115,6 +139,27 @@ export const MasterPasswordDialog = GObject.registerClass(
 
         setError(text) {
             this.errorLabel.set_text(text || '');
+        }
+
+        // Soft passphrase guidance while a NEW vault's master password is
+        // being typed. Empty field → the static creation guidance; very
+        // short input → a gentle "longer is harder to guess" hint; adequate
+        // length → a reassurance to keep it unique. No verdict labels, no
+        // thresholds that block anything (T5).
+        _updateGuidance(guidance) {
+            if (!this.guidanceLabel) {
+                return;
+            }
+            const length = (this.entry.get_text() || '').length;
+            let text = guidance;
+            if (length > 0 && length < MASTER_PASSWORD_MIN_LENGTH) {
+                text = _('A longer passphrase is much harder to guess — the vault password cannot be recovered.');
+            } else if (length >= MASTER_PASSWORD_MIN_LENGTH) {
+                text = _('Good length. Keep this passphrase unique — do not reuse another account\'s password.');
+            }
+            if (text !== this.guidanceLabel.get_text()) {
+                this.guidanceLabel.set_text(text);
+            }
         }
 
         async _submit(callback) {

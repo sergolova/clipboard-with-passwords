@@ -2400,9 +2400,17 @@ const ClipboardIndicator = GObject.registerClass({
         const askPassword = !this.vaultManager.isUnlocked();
 
         if (askPassword) {
+            // T5 (REMAINING_SECURITY_PLAN.md): the same dialog CREATES the
+            // master password when no vault file exists yet (first run or the
+            // file was deleted). In that case explain the requirement (a long,
+            // unique, unrecoverable passphrase) instead of the plain unlock
+            // prompt. zipPath is already expanded by setZipPath().
+            const isFreshVault = !Gio.File.new_for_path(this.vaultManager.zipPath).query_exists(null);
             const dialog = new MasterPasswordDialog(
                 _('Password Vault'),
-                _('Enter the master password to unlock:'),
+                isFreshVault
+                    ? _('Create the master password for the new vault:')
+                    : _('Enter the master password to unlock:'),
                 async (pwd) => {
                     // Let exceptions reach the dialog: it displays e.message.
                     if (this._destroyed) {
@@ -2411,7 +2419,10 @@ const ClipboardIndicator = GObject.registerClass({
                     await this.vaultManager.unlock(pwd);
                     this._unlockedVaultPath = this.vaultManager.zipPath;
                     return true;
-                }
+                },
+                isFreshVault
+                    ? _('Use a long, unique passphrase — the vault password cannot be recovered.')
+                    : null
             );
             dialog.connect('closed', () => {
                 if (this._destroyed) {
