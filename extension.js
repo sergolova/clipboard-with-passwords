@@ -2400,11 +2400,10 @@ const ClipboardIndicator = GObject.registerClass({
         const askPassword = !this.vaultManager.isUnlocked();
 
         if (askPassword) {
-            // T5 (REMAINING_SECURITY_PLAN.md): the same dialog CREATES the
-            // master password when no vault file exists yet (first run or the
-            // file was deleted). In that case explain the requirement (a long,
-            // unique, unrecoverable passphrase) instead of the plain unlock
-            // prompt. zipPath is already expanded by setZipPath().
+            // The same dialog CREATES the master password when no vault file exists yet
+            // (first run or the file was deleted). In that case explain the
+            // requirement (a long, unique, unrecoverable passphrase) instead of
+            // the plain unlock prompt. zipPath is already expanded by setZipPath().
             const isFreshVault = !Gio.File.new_for_path(this.vaultManager.zipPath).query_exists(null);
             const dialog = new MasterPasswordDialog(
                 _('Password Vault'),
@@ -2486,7 +2485,7 @@ const ClipboardIndicator = GObject.registerClass({
     // Confirmation dialog shown BEFORE any conversion runs: the archive will
     // be rewritten in the other format and the previous file kept. Also
     // refuses up-front when the target name is already occupied by a different
-    // file (destCollides, T1) — confirming that would only fail at save time.
+    // file (destCollides) — confirming that would only fail at save time.
     async _confirmVaultConversion() {
         const mgr = this.vaultManager;
         if (!mgr.isFormatConversionPending()) {

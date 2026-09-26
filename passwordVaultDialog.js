@@ -10,9 +10,10 @@ import { themeColors } from './theme.js';
 import { logWarn } from './logging.js';
 
 // Soft floor for the live passphrase hint shown when a NEW vault is created
-// (T5, REMAINING_SECURITY_PLAN.md). Deliberately a guideline, not a hard
-// "weak/strong" verdict: the hint only reacts to length, it never rejects a
-// password and it performs no network or policy checks.
+// (its master password is chosen inside this dialog for the first time).
+// Deliberately a guideline, not a hard "weak/strong" verdict: the hint only
+// reacts to length, it never rejects a password and it performs no network
+// or policy checks.
 const MASTER_PASSWORD_MIN_LENGTH = 8;
 
 // Button that inserts the CLIPBOARD text into `entry`:
@@ -94,12 +95,11 @@ export const MasterPasswordDialog = GObject.registerClass(
             });
             mainBox.add_child(this.errorLabel);
 
-            // T5 (REMAINING_SECURITY_PLAN.md): when this dialog CREATES the
-            // vault (fresh archive — first run or the file was deleted), the
-            // password typed here becomes the master password. Explain what
-            // makes a good one and that it can never be recovered. Regular
-            // unlock dialogs pass guidance=null and show no extra label; the
-            // live hint reacts to length only (see _updateGuidance).
+            // When this dialog CREATES the vault (fresh archive — first run or the file
+            // was deleted), the password typed here becomes the master password.
+            // Explain what makes a good one and that it can never be recovered.
+            // Regular unlock dialogs pass guidance=null and show no extra label;
+            // the live hint reacts to length only (see _updateGuidance).
             if (guidance) {
                 this.guidanceLabel = new St.Label({
                     style: `font-size: 11px; color: ${themeColors().secondary};`,
@@ -145,7 +145,7 @@ export const MasterPasswordDialog = GObject.registerClass(
         // being typed. Empty field → the static creation guidance; very
         // short input → a gentle "longer is harder to guess" hint; adequate
         // length → a reassurance to keep it unique. No verdict labels, no
-        // thresholds that block anything (T5).
+        // thresholds that block anything.
         _updateGuidance(guidance) {
             if (!this.guidanceLabel) {
                 return;

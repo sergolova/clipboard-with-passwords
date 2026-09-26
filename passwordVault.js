@@ -164,7 +164,7 @@ export function canonicalFormatPath(pathStr, use7z) {
 // automatic rename / conversion must consult this guard first: the only file
 // allowed to occupy the target path is the current vault itself (a normal
 // save). Any other existing file aborts the operation — the caller surfaces a
-// clear message and nothing is overwritten or deleted (T1 data-loss guard).
+// clear message and nothing is overwritten or deleted — a hard data-loss guard.
 export function destCollides(srcPath, destPath) {
     if (!destPath || destPath === srcPath) {
         return false;
@@ -276,7 +276,7 @@ export class PasswordVaultManager {
     // vault is created as and what a conversion produces; an existing vault is
     // converted — after user confirmation — via `convertToDesiredFormat()`.
     //
-    // W1: `userSet` tells whether the user explicitly picked a format (the
+    // `userSet` tells whether the user explicitly picked a format (the
     // key differs from its default). While they never chose one, an existing
     // archive on disk stays the source of truth — a change of the *default*
     // (7z going forward) must not silently convert legacy ZIP vaults. A vault
@@ -309,7 +309,7 @@ export class PasswordVaultManager {
     // rename the file so its extension matches the format. Automatic and
     // best-effort (a failure here never fails the unlock, and a rename cannot
     // lose data): when the target name is already occupied by a different file
-    // the rename is skipped via destCollides() instead of replacing it (T1).
+    // the rename is skipped via destCollides() instead of replacing it.
     // Format *conversion* is deliberately NOT performed here — it needs the
     // user's confirmation and is driven by the UI layer (extension.js) through
     // convertToDesiredFormat().
@@ -458,7 +458,7 @@ export class PasswordVaultManager {
             throw new Error(_('The password vault file is read-only and cannot be updated.') + '\n' + this.zipPath);
         }
 
-        // P1.3: cheap on-disk pre-check — stop archive bombs before 7-Zip even
+        // Cheap on-disk pre-check — stop archive bombs before 7-Zip even
         // unpacks them. The mid-stream byte cap (streamStdoutWithLimit, below)
         // is the second line of defense once decompression starts.
         let archiveSize = 0;
@@ -497,12 +497,12 @@ export class PasswordVaultManager {
         }
 
         return streamStdoutWithLimit(proc, {
-            // W2 (P1.2): the byte ceiling is enforced MID-STREAM — the
-            // process is force-killed the moment stdout surpasses it, before
-            // the shell can ever buffer an archive bomb into memory.
+            // The byte ceiling is enforced MID-STREAM — the process is
+            // force-killed the moment stdout surpasses it, before the shell
+            // can ever buffer an archive bomb into memory.
             maxBytes: MAX_VAULT_JSON_BYTES,
-            // W3 (P1.3): hard runtime ceiling — a hung 7-Zip cannot block the
-            // unlock flow forever.
+            // Hard runtime ceiling — a hung 7-Zip cannot block the unlock flow
+            // forever.
             timeoutMs: SEVENZ_TIMEOUT_MS,
             // Send the master password via stdin, never argv.
             input: `${password}\n`
@@ -515,7 +515,7 @@ export class PasswordVaultManager {
                 throw new Error(this._unlockFailureHint());
             }
 
-            // W2 step 2: streamStdoutWithLimit capped the BYTE count
+            // Second ceiling: streamStdoutWithLimit capped the BYTE count
             // mid-stream; the UTF-16 check below is the semantic ceiling on
             // the decoded string (for ASCII bytes ≥ chars; for multibyte
             // payloads the byte cap was the stricter one — both are honouring
@@ -534,8 +534,8 @@ export class PasswordVaultManager {
 
             // Validate + bound the payload BEFORE committing state: an
             // oversized or malformed archive must reject the unlock
-            // without leaving the vault half-unlocked with stale data
-            // (P1.3). Any _normalizeVaultData Error is already a
+            // without leaving the vault half-unlocked with stale data. Any
+            // _normalizeVaultData Error is already a
             // user-readable message, so it is passed through as-is.
             let normalized;
             try {
@@ -549,7 +549,7 @@ export class PasswordVaultManager {
             // Align the on-disk archive NAME with its content (rename to a
             // matching extension) without failing the unlock and without
             // asking the user anything — a rename cannot lose data, and the
-            // destCollides() guard (T1) aborts it when the target is already
+            // destCollides() guard aborts it when the target is already
             // occupied. Format *conversion* is deliberately not run here: it
             // needs explicit user confirmation and is driven by the UI layer
             // (extension.js) via convertToDesiredFormat().
@@ -558,8 +558,8 @@ export class PasswordVaultManager {
             } catch (err) {
                 logWarn('Vault content alignment failed:', err);
             }
-            // P2.2: a save that died mid-way (crash / kill / power loss)
-            // leaves temp artifacts behind — clean up ours now that the
+            // A save that died mid-way (crash / kill / power loss) leaves
+            // temp artifacts behind — clean up ours now that the
             // vault is unlocked, so read-only sessions also self-heal.
             this._cleanupStaleTemp();
             return true;
@@ -581,7 +581,7 @@ export class PasswordVaultManager {
             throw new Error(_('The password vault is locked.'));
         }
 
-        // P2.2: remove temp artifacts a previous save may have left behind
+        // Remove temp artifacts a previous save may have left behind
         // (crash / kill / power loss) before writing anything new.
         this._cleanupStaleTemp();
 
@@ -715,8 +715,8 @@ export class PasswordVaultManager {
         }
 
         return streamStdoutWithLimit(proc, {
-            // W3 (P1.3): a hung `7z a` must not block the save flow — same
-            // hard deadline as unlock/verify. `7z a` writes only a few banner
+            // A hung `7z a` must not block the save flow — same hard deadline
+            // as unlock/verify. `7z a` writes only a few banner
             // lines to stdout; the cap is generous and only ever fires on a
             // pathologically broken binary.
             maxBytes: MAX_VAULT_ARCHIVE_BYTES,
@@ -761,7 +761,7 @@ export class PasswordVaultManager {
             // so GLib.rename cannot fail with EXDEV. On any other
             // failure the previous archive is left untouched.
             //
-            // T1 (data-loss guard): a conversion writes the new archive under a
+            // Data-loss guard: a conversion writes the new archive under a
             // *different* name (storage.zip ↔ storage.7z). If that target path
             // already holds a different file, GLib.rename would silently
             // replace it — refuse instead and leave BOTH files untouched.
@@ -856,7 +856,7 @@ export class PasswordVaultManager {
         }
     }
 
-    // P2.2: remove temporary artifacts left behind by a save that died mid-way
+    // Remove temporary artifacts left behind by a save that died mid-way
     // (crash / kill / power loss). The normal cleanup callbacks always run on
     // the success and failure paths, but not on abnormal termination, so two
     // kinds of leftovers can survive:
@@ -1065,15 +1065,14 @@ export class PasswordVaultManager {
         return items;
     }
 
-    // P1.3 + P2.4: turn raw parsed-unlock payload into a bounded, trusted
-    // shape. The README explicitly allows hand-editing data.json, so the
-    // policy is two-sided:
-    //   * P1.3 caps (items count, per-field length, per-item extra-field
+    // Turn raw parsed-unlock payload into a bounded, trusted shape. The README
+    // explicitly allows hand-editing data.json, so the policy is two-sided:
+    //   * the hard caps (items count, per-field length, per-item extra-field
     //     count) and an unsupported format version REJECT with a user-readable
     //     Error — never silent truncation;
-    //   * P2.4 malformed TYPES are coerced and fixed (see _sanitizeItem),
-    //     non-object item entries are dropped — a broken hand-edit must not
-    //     lock the user out of the vault or crash with a raw TypeError.
+    //   * malformed TYPES are coerced and fixed (see _sanitizeItem), non-object
+    //     item entries are dropped — a broken hand-edit must not lock the user
+    //     out of the vault or crash with a raw TypeError.
     // Called BEFORE the manager commits unlocked state, so a rejected payload
     // never leaves the vault half-unlocked.
     _normalizeVaultData(parsed) {
@@ -1108,14 +1107,14 @@ export class PasswordVaultManager {
     // Build a minimal item object: empty/false fields are omitted entirely so
     // the stored JSON stays clean and easy to edit by hand or with other tools.
     //
-    // P2.4 — the README explicitly allows hand-editing data.json, so this
-    // COERCES AND FIXES malformed entries instead of crashing:
+    // The README explicitly allows hand-editing data.json, so this COERCES AND
+    // FIXES malformed entries instead of crashing:
     //   * a non-object entry (null / string / number / array) returns null —
     //     _normalizeVaultData drops it, garbage carries no card data;
     //   * name / id / category / description / login / password / extra
     //     label&value are coerced to strings; updatedAt is kept only when it
     //     is a finite number; isHidden is coerced to boolean;
-    //   * P1.3 caps still REJECT (never silent truncation): a field longer
+    //   * the hard caps still REJECT (never silent truncation): a field longer
     //     than MAX_FIELD_LENGTH or more than MAX_EXTRA_FIELDS extra fields
     //     rejects the whole load.
     _sanitizeItem(data) {

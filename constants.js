@@ -71,7 +71,7 @@ export const DEFAULT_VAULT_PATH = '~/.config/clipboard-with-passwords/storage.zi
 // `storage.7z` instead of `storage.zip` so the file name stays honest.
 export const DEFAULT_VAULT_PATH_7Z = '~/.config/clipboard-with-passwords/storage.7z';
 
-// P1.3: structural limits enforced when a vault archive is loaded, so a
+// Structural limits enforced when a vault archive is loaded, so a
 // crafted or hand-broken archive cannot make the shell JSON.parse unbounded
 // data, hold an unbounded item list in memory, or render unbounded UI.
 // These are generous upper bounds — a real vault is a few kilobytes — sized so
@@ -85,9 +85,9 @@ export const MAX_VAULT_JSON_BYTES = 64 * 1024 * 1024;      // decompressed JSON 
 export const MAX_VAULT_ITEMS = 1000;                       // records per vault
 export const MAX_FIELD_LENGTH = 4096;                      // chars per string field (name, password, extra label/value, …)
 export const MAX_EXTRA_FIELDS = 32;                        // extra fields per item
-export const STALE_TEMP_MIN_AGE_MS = 60 * 1000;            // P2.2: temp artifacts younger than this are treated as live writes
+export const STALE_TEMP_MIN_AGE_MS = 60 * 1000;            // temp artifacts younger than this are treated as live writes and skipped
 
-// W3 (P1.3): hard ceiling on how long a single `7z` subprocess may run for
+// Hard ceiling on how long a single `7z` subprocess may run for
 // before it is force-killed. 7-Zip on a small vault finishes in well under
 // a second; 60 s only ever fires on a hung / pathological binary, and a
 // force-kill then guarantees the unlock/save flow cannot block the shell

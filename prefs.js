@@ -654,7 +654,7 @@ class Settings {
         const suffix = /\.(zip|7z)$/i.exec(resolved);
         const nameFormat = suffix ? suffix[1].toLowerCase() : null;
         const desired7z = this.field_vault_format_7z.active;
-        // W1: while the user never explicitly chose a format (the key is at
+        // While the user never explicitly chose a format (the key is at
         // its default), an existing archive keeps the format it was created
         // with — the disk is the source of truth and no silent conversion
         // happens. Only the toggle flip itself requests a conversion.

@@ -13,14 +13,13 @@ import { logWarn } from './logging.js';
 //   'too-large'  — stdout exceeded maxBytes (killed mid-stream)
 //   'read-error' — the stdout/stderr pipe failed for another reason (killed)
 //
-// Rationale (P1.2): `Gio.Subprocess.communicate_utf8_async` buffers the ENTIRE
-// stdout before its callback runs, so a crafted or corrupt vault could make
-// the shell allocate unbounded memory and only fail the MAX_VAULT_JSON_BYTES
+// Why stream at all: `Gio.Subprocess.communicate_utf8_async` buffers the
+// ENTIRE stdout before its callback runs, so a crafted or corrupt vault could
+// make the shell allocate unbounded memory and only fail the MAX_VAULT_JSON_BYTES
 // check after the fact. Streaming the pipe in bounded chunks caps the
 // allocation mid-stream: the process is force-killed the moment the limit is
 // crossed, before the buffer can grow further. The same wrapper also arms a
-// hard timeout (P1.3) so a hung 7-Zip can never block the unlock / save flow
-// forever.
+// hard timeout so a hung 7-Zip can never block the unlock / save flow forever.
 
 const STREAM_CHUNK_BYTES = 64 * 1024; // per read_bytes_async call
 const STDERR_CAP_BYTES = 64 * 1024;   // stderr is diagnostics-only; never buffer more
