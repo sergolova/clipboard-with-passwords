@@ -75,7 +75,8 @@
 }
 
 .clipboard-menu-img-preview {
-    border:solid 1px white;
+    border:solid 1px #b8b8b8;
+    border-radius: 2px;
     overflow:hidden;
     margin:0;
     padding:0;
@@ -86,7 +87,7 @@
 }
 
 .clipboard-indicator-img-preview {
-    border:solid 1px white;
+    border:solid 1px #b8b8b8;
     width:1em;
     height:1em;
     margin-right:.25em;
