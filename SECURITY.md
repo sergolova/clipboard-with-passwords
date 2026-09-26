@@ -43,12 +43,12 @@ user's session.
 ## Vault encryption at rest
 
 - The vault is a **standard encrypted archive** containing a single `data.json`:
-  - **ZIP** (default) — AES-256 via WinZip AES (`-mem=AES256`,
-    PBKDF2-HMAC-SHA1). The legacy ZipCrypto algorithm is **never** used for new
-    archives; archives written by older versions of the extension still open and
-    are re-encrypted to AES-256 at the next save.
-  - **7z** (opt-in) — native AES-256 with **encrypted headers** (the internal
+  - **7z** (default) — native AES-256 with **encrypted headers** (the internal
     file name and sizes are not visible from the file alone).
+  - **ZIP** (explicit compatibility option) — AES-256 via WinZip AES
+    (`-mem=AES256`, PBKDF2-HMAC-SHA1). The legacy ZipCrypto algorithm is
+    **never** used for new archives; archives written by older versions of the
+    extension still open and are re-encrypted to AES-256 at the next save.
 - The archive is encrypted **at rest**; while the vault is unlocked its contents
   are held in the extension's memory (see the README for the session lifecycle —
   auto-lock on screen lock / suspend and after path changes).

@@ -14,6 +14,7 @@ import {
 import { logWarn } from './logging.js';
 import { cryptoRandomInt, setEntropySource } from './random.js';
 import { streamStdoutWithLimit } from './stdoutReader.js';
+import { fmt } from './strings.js';
 
 // Internal sentinel for the pseudo-category "All". It is deliberately NOT the
 // translated word (e.g. 'Все'/'All'): such a word could collide with a real
@@ -158,6 +159,19 @@ export function canonicalFormatPath(pathStr, use7z) {
     return pathStr.slice(0, -suffix[0].length) + (use7z ? '.7z' : '.zip');
 }
 
+// True when `destPath` exists AND is not the very file `srcPath` names.
+// GLib.rename() silently replaces an existing destination on Linux, so every
+// automatic rename / conversion must consult this guard first: the only file
+// allowed to occupy the target path is the current vault itself (a normal
+// save). Any other existing file aborts the operation — the caller surfaces a
+// clear message and nothing is overwritten or deleted (T1 data-loss guard).
+export function destCollides(srcPath, destPath) {
+    if (!destPath || destPath === srcPath) {
+        return false;
+    }
+    return Gio.File.new_for_path(destPath).query_exists(null);
+}
+
 // Archive backends to use for the encrypted ZIP vault, in order of
 // preference. The full `7z` (p7zip-full) is the primary backend; the
 // standalone `7za` (p7zip) is used as a fallback, and `7zz` (the standalone
@@ -260,7 +274,7 @@ export class PasswordVaultManager {
     // The user's *desired* container for the vault (settings toggle). ZIP =
     // false (portable), 7z = true (encrypted headers). It steers what a fresh
     // vault is created as and what a conversion produces; an existing vault is
-    // converted when `alignVaultToContent()` runs.
+    // converted — after user confirmation — via `convertToDesiredFormat()`.
     //
     // W1: `userSet` tells whether the user explicitly picked a format (the
     // key differs from its default). While they never chose one, an existing
@@ -277,38 +291,81 @@ export class PasswordVaultManager {
         }
     }
 
+    // The format the user selected in Settings (7z = encrypted headers). Read
+    // by the UI layer (extension.js) to label the conversion confirmation
+    // dialog; the *actual* on-disk format lives in `archiveFormat7z`.
+    get desiredFormat7z() {
+        return this._desiredFormat7z;
+    }
+
     // True when the vault is open and the on-disk format differs from the
     // one selected in settings — i.e. a conversion should happen now.
     isFormatConversionPending() {
         return this.unlocked && this._desiredFormat7z !== this.archiveFormat7z;
     }
 
-    // Make the on-disk archive "answer to its content": detect the actual
-    // container from the file bytes, rename the file so its name matches the
-    // format, and — when the user selected another format in settings —
-    // convert (rewrite the whole archive) in that format. Best-effort: a
-    // failure here never fails the unlock itself or destroys the previous
-    // archive; the next save / unlock retries the alignment.
-    async alignVaultToContent() {
+    // Make the on-disk archive name "answer to its content": detect the actual
+    // container from the file bytes and — when the file name contradicts it —
+    // rename the file so its extension matches the format. Automatic and
+    // best-effort (a failure here never fails the unlock, and a rename cannot
+    // lose data): when the target name is already occupied by a different file
+    // the rename is skipped via destCollides() instead of replacing it (T1).
+    // Format *conversion* is deliberately NOT performed here — it needs the
+    // user's confirmation and is driven by the UI layer (extension.js) through
+    // convertToDesiredFormat().
+    async alignNameToContent() {
         const actual = detectArchiveFormat(this.zipPath) === '7z';
         this.archiveFormat7z = actual;
 
         const aligned = canonicalFormatPath(this.zipPath, actual);
         if (aligned !== this.zipPath) {
-            if (GLib.rename(this.zipPath, aligned) < 0) {
+            if (destCollides(this.zipPath, aligned)) {
+                logWarn('Vault rename skipped: target already exists: ' + aligned);
+                this._notifyPathTransition({
+                    conversionBlocked: true,
+                    blockingPath: aligned
+                });
+            } else if (GLib.rename(this.zipPath, aligned) < 0) {
                 logWarn('Failed to rename vault archive to match its format: ' + aligned);
             } else {
                 this.zipPath = aligned;
                 this._notifyPathTransition({ renamed: true });
             }
         }
+    }
 
-        if (this._desiredFormat7z !== this.archiveFormat7z) {
-            const from = this.archiveFormat7z ? '7z' : 'ZIP';
-            this.archiveFormat7z = this._desiredFormat7z;
-            await this.save(); // rewrites the whole archive in the desired format
-            this._notifyPathTransition({ converted: true, from, to: this._desiredFormat7z ? '7z' : 'ZIP' });
+    // Convert the on-disk archive into the format currently selected in
+    // Settings. Called by the UI layer only after the user confirms the
+    // pending conversion (dialogs in extension.js); the previous-format file
+    // — and its .bak — are left in place after the rewrite and can be removed
+    // via removeVaultFile(). Returns a summary object for the post-conversion
+    // dialog, or null when nothing was pending.
+    async convertToDesiredFormat() {
+        if (!this.isFormatConversionPending()) {
+            return null;
         }
+        const previousPath = this.zipPath;
+        const from = this.archiveFormat7z ? '7z' : 'ZIP';
+        const to = this._desiredFormat7z ? '7z' : 'ZIP';
+        const records = (this.data.items || []).length;
+
+        this.archiveFormat7z = this._desiredFormat7z;
+        await this.save();
+
+        this._notifyPathTransition({
+            converted: true,
+            from,
+            to,
+            previousPath,
+            records
+        });
+        return {
+            from,
+            to,
+            records,
+            previousPath,
+            newPath: this.zipPath
+        };
     }
 
     _notifyPathTransition(info) {
@@ -319,6 +376,44 @@ export class PasswordVaultManager {
                 logWarn('Vault path transition callback failed:', e);
             }
         }
+    }
+
+    // Remove the leftover archive file of a *previous* vault format (and its
+    // .bak) after a confirmed conversion. Deliberately conservative: the path
+    // must exist, must not be the currently active vault path, and must really
+    // look like an archive we recognize (detectArchiveFormat) — a random path
+    // is never deleted, and nothing is removed more than once. Returns true
+    // when the file is gone (or there was nothing to remove), false when the
+    // removal was refused or failed.
+    removeVaultFile(pathStr, { withBak = true } = {}) {
+        if (!pathStr || pathStr === this.zipPath) {
+            return false;
+        }
+        const file = Gio.File.new_for_path(pathStr);
+        if (!file.query_exists(null)) {
+            return true; // nothing to clean
+        }
+        if (detectArchiveFormat(pathStr) === null) {
+            logWarn('Refusing to remove non-vault file: ' + pathStr);
+            return false;
+        }
+        try {
+            file.delete(null);
+        } catch (e) {
+            logWarn('Failed to remove previous vault archive: ' + pathStr, e);
+            return false;
+        }
+        if (withBak) {
+            try {
+                const bak = Gio.File.new_for_path(pathStr + '.bak');
+                if (bak.query_exists(null)) {
+                    bak.delete(null);
+                }
+            } catch (e) {
+                logWarn('Failed to remove previous vault backup: ' + pathStr + '.bak', e);
+            }
+        }
+        return true;
     }
 
     isUnlocked() {
@@ -451,13 +546,15 @@ export class PasswordVaultManager {
             this.masterPassword = password;
             this.unlocked = true;
             this.data = normalized;
-            // Align the on-disk archive with its content (rename to a
-            // matching name, convert to the selected format) without
-            // failing the unlock — the vault data is already loaded.
-            // Awaited (not fire-and-forget) so a conversion save can
-            // never race a save the user triggers right after unlock.
+            // Align the on-disk archive NAME with its content (rename to a
+            // matching extension) without failing the unlock and without
+            // asking the user anything — a rename cannot lose data, and the
+            // destCollides() guard (T1) aborts it when the target is already
+            // occupied. Format *conversion* is deliberately not run here: it
+            // needs explicit user confirmation and is driven by the UI layer
+            // (extension.js) via convertToDesiredFormat().
             try {
-                await this.alignVaultToContent();
+                await this.alignNameToContent();
             } catch (err) {
                 logWarn('Vault content alignment failed:', err);
             }
@@ -663,6 +760,19 @@ export class PasswordVaultManager {
             // Atomic replacement: same directory ⇒ same filesystem,
             // so GLib.rename cannot fail with EXDEV. On any other
             // failure the previous archive is left untouched.
+            //
+            // T1 (data-loss guard): a conversion writes the new archive under a
+            // *different* name (storage.zip ↔ storage.7z). If that target path
+            // already holds a different file, GLib.rename would silently
+            // replace it — refuse instead and leave BOTH files untouched.
+            // Replacing the active vault itself (targetPath === zipPath) is the
+            // normal save and stays allowed.
+            if (destCollides(this.zipPath, targetPath)) {
+                cleanupTmpArchive();
+                cleanupTmp();
+                logWarn('Vault save refused: target path already exists: ' + targetPath);
+                throw new Error(fmt(_('Another file already exists at the target archive path: %1$s. Move or delete it, then try again.'), targetPath));
+            }
             if (GLib.rename(tmpArchivePath, targetPath) < 0) {
                 cleanupTmpArchive();
                 logWarn('Failed to atomically replace the vault archive.');

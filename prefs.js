@@ -340,7 +340,7 @@ class Settings {
 
         this.field_vault_format_7z = new Adw.SwitchRow({
             title: _("Use 7z vault format"),
-            subtitle: _("The 7z format (AES-256) encrypts the archive headers, hiding the internal file name and per-entry sizes; opening it requires an application with 7z support (this extension uses the system 7-Zip). ZIP stays portable but reveals them. A new vault is created in 7z by default; an existing archive keeps its current format until you switch it here — the conversion then happens the next time the vault is opened with the master password, and the file is renamed to match (.zip ↔ .7z).")
+            subtitle: _("The 7z format (AES-256) encrypts the archive headers, hiding the internal file name and per-entry sizes; opening it requires an application with 7z support (this extension uses the system 7-Zip). ZIP stays portable but reveals them. A new vault is created in 7z by default; an existing archive keeps its current format until you switch it here — the conversion is then offered on the next unlock (or right away while the vault is unlocked) and runs once you confirm it; the file is renamed to match (.zip ↔ .7z) and the old copy is kept until you delete it.")
         });
         this.field_vault_format_7z.connect('notify::active', () => {
             // Keep the *default* file name honest: switching the format with

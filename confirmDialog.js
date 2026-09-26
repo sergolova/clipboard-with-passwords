@@ -2,6 +2,7 @@ import St from 'gi://St';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
+import { logWarn } from './logging.js';
 
 export class DialogManager {
     #openDialog;
@@ -11,6 +12,34 @@ export class DialogManager {
         this.#openDialog = new ConfirmDialog(title, message + "\n" + sub_message, ok_label, cancel_label, callback);
         this.#openDialog.onFinish = () => this.#openDialog = null;
         this.#openDialog.open();
+    }
+
+    // Promise-based confirm: resolves `true` when the user picks the OK
+    // action, `false` on Cancel / Escape. The single-open-dialog policy from
+    // open() is kept; if a dialog is already open a second confirm cannot
+    // appear and resolves `false` (the caller treats it as "declined" — never
+    // let a confirmation be silently skipped, so this is logged as well).
+    openConfirm (title, message, sub_message, ok_label, cancel_label) {
+        if (this.#openDialog) {
+            logWarn('Confirm dialog skipped: another dialog is already open.');
+            return Promise.resolve(false);
+        }
+        return new Promise(resolve => {
+            const dialog = new ConfirmDialog(
+                title, message + "\n" + sub_message, ok_label, cancel_label,
+                () => {
+                    resolve(true);
+                });
+            // Cancel / Escape closes the dialog without running the callback:
+            // resolve `false` from the 'closed' signal. When the OK path runs
+            // first the promise is already resolved and this is a no-op.
+            dialog.connect('closed', () => {
+                resolve(false);
+            });
+            this.#openDialog = dialog;
+            dialog.onFinish = () => this.#openDialog = null;
+            dialog.open();
+        });
     }
 
     destroy () {

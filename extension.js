@@ -22,11 +22,12 @@ import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
-import {PasswordVaultManager} from './passwordVault.js';
+import {PasswordVaultManager, canonicalFormatPath, destCollides} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
 import {themeClass, themeColors} from './theme.js';
 import {logError, logWarn} from './logging.js';
+import {fmt} from './strings.js';
 
 const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
@@ -256,8 +257,14 @@ const ClipboardIndicator = GObject.registerClass({
                 return;
             }
             if (info.converted) {
+                // The conversion result is surfaced by the UI layer's own
+                // post-conversion dialog (record count, new path, cleanup
+                // offer) right after convertToDesiredFormat() — a passive
+                // notification here would duplicate it. Nothing to show.
+                return;
+            } else if (info.conversionBlocked) {
                 Main.notify(_('Password Vault'),
-                    _('The vault was converted to the selected archive format.') + '\n' + newPath);
+                    _('The vault archive was not converted: another file already exists at the target path.') + '\n' + info.blockingPath);
             } else if (info.renamed) {
                 Main.notify(_('Password Vault'),
                     _('The vault archive was renamed to match its content.') + '\n' + newPath);
@@ -2278,14 +2285,17 @@ const ClipboardIndicator = GObject.registerClass({
 
             // Keep the vault manager's desired archive container in sync with
             // the settings (7z vs ZIP). When the user switches the format
-            // while the vault is still open, we already hold the master
-            // password — convert right away (and rename the file to match)
-            // instead of waiting for the next save or unlock.
+            // while the vault is still open we already hold the master
+            // password, so the conversion can run right away — but only after
+            // the user confirms it (see _maybeConvertVault): the rewrite
+            // touches every byte and leaves the old-format file behind.
             this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z, { userSet: VAULT_FORMAT_7Z_USER_SET });
             if (this.vaultManager.isFormatConversionPending()) {
-                this.vaultManager.alignVaultToContent().catch(err => {
-                    logError('Clipboard Indicator: vault format conversion failed', err);
-                });
+                // Conversion is a destructive-ish rewrite (touches every byte)
+                // and leaves the old-format file behind — never run it without
+                // the user's confirmation. "Not now" postpones it to the next
+                // unlock; the format toggle itself is kept as selected.
+                this._maybeConvertVault();
             }
 
             // If the vault got disabled while it was open, drop back to the
@@ -2407,14 +2417,102 @@ const ClipboardIndicator = GObject.registerClass({
                 if (this._destroyed) {
                     return;
                 }
+                // Run the pending-format-confirmation flow only AFTER the
+                // password dialog is gone (two modal dialogs would fight over
+                // the input grab), then open the vault menu.
                 if (this.vaultManager.isUnlocked()) {
-                    this._showVaultMenu();
+                    this._openVaultAfterUnlock();
                 }
             });
             this._registerVaultDialog(dialog);
             dialog.open();
         } else {
             this._showVaultMenu();
+        }
+    }
+
+    // After a successful unlock, run the pending-format-confirmation flow (if
+    // any) and only then open the vault menu. The confirmation dialog must not
+    // appear while the password dialog is still modal, so it starts here, in
+    // the password dialog's 'closed' handler.
+    async _openVaultAfterUnlock() {
+        try {
+            await this._maybeConvertVault();
+        } finally {
+            if (!this._destroyed && this.vaultManager.isUnlocked()) {
+                this._showVaultMenu();
+            }
+        }
+    }
+
+    // Single entry point for the vault conversion flow used by both triggers
+    // (pending conversion at unlock, and the format toggle while unlocked):
+    // confirm → convert → report the result (with cleanup offer). Never
+    // throws: conversion problems become a notification.
+    async _maybeConvertVault() {
+        if (!this.vaultManager.isUnlocked() ||
+            !this.vaultManager.isFormatConversionPending()) {
+            return;
+        }
+        try {
+            const confirmed = await this._confirmVaultConversion();
+            if (!confirmed) {
+                return; // "Not now" — postponed until the next unlock
+            }
+            const summary = await this.vaultManager.convertToDesiredFormat();
+            if (summary) {
+                await this._showConversionResult(summary);
+            }
+        } catch (e) {
+            logWarn('Vault format conversion failed:', e);
+            const msg = (e && e.message && typeof e.message === 'string' && e.message.length > 0)
+                ? e.message
+                : _('Failed to update the password vault archive.');
+            Main.notify(_('Password Vault'), msg);
+        }
+    }
+
+    // Confirmation dialog shown BEFORE any conversion runs: the archive will
+    // be rewritten in the other format and the previous file kept. Also
+    // refuses up-front when the target name is already occupied by a different
+    // file (destCollides, T1) — confirming that would only fail at save time.
+    async _confirmVaultConversion() {
+        const mgr = this.vaultManager;
+        if (!mgr.isFormatConversionPending()) {
+            return false;
+        }
+
+        const from = mgr.archiveFormat7z ? '7z' : 'ZIP';
+        const to = mgr.desiredFormat7z ? '7z' : 'ZIP';
+        const targetPath = canonicalFormatPath(mgr.zipPath, mgr.desiredFormat7z);
+        const records = (mgr.data.items || []).length;
+
+        if (destCollides(mgr.zipPath, targetPath)) {
+            Main.notify(_('Password Vault'),
+                fmt(_('Another file already exists at the target archive path: %1$s. Move or delete it, then try again.'), targetPath));
+            return false;
+        }
+
+        return this.dialogManager.openConfirm(
+            _('Convert vault format now?'),
+            fmt(_('The vault is currently stored as %1$s, but %2$s is selected in Settings.'), from, to),
+            fmt(_('%1$d records will be migrated into the new archive. The previous file is kept and can be deleted afterwards.'), records),
+            _('Convert now'),
+            _('Not now'));
+    }
+
+    // Post-conversion dialog: reports the record count and the new path, and
+    // offers to delete the old-format file (and its .bak) so the vault folder
+    // does not silently end up with two copies.
+    async _showConversionResult(summary) {
+        const removeOld = await this.dialogManager.openConfirm(
+            _('Vault converted'),
+            fmt(_('%1$d records were migrated into: %2$s'), summary.records, summary.newPath),
+            fmt(_('The previous archive is still at %1$s. Delete it now? The new archive was verified after writing.'), summary.previousPath),
+            _('Delete old archive'),
+            _('Keep both'));
+        if (removeOld) {
+            this.vaultManager.removeVaultFile(summary.previousPath, { withBak: true });
         }
     }
 

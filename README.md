@@ -218,7 +218,7 @@ extension in **GNOME Extensions** (or with
 
 ## 🔐 The vault archive
 
-The vault is a standard encrypted archive (ZIP by default) containing a single `data.json` file.
+The vault is a standard encrypted archive (7z by default) containing a single `data.json` file.
 The extension uses the `7z` command (or `7za` as a fallback) for both encryption and decryption.
 
 > 🔐 **How the vault is protected** — AES-256 encryption, master-password
@@ -250,13 +250,17 @@ a file that claims to be ZIP.
   byte (`storage.7z`, not a `.zip`-named 7z archive). A custom
   non-`.zip`/`.7z` name is kept as-is.
 - **Existing vault** — the format on disk is the source of truth. When you
-  switch the toggle, the vault is **converted the next time it is opened with
-  the master password**: the whole archive is rewritten in the new format and
-  renamed to match (`storage.zip` ↔ `storage.7z`); the stored path in Settings
-  is updated in the same step, and you get a notification.
-- **After a conversion** the old-format file remains next to the archive (its
-  `.bak` too) as a leftover copy — delete it once you have confirmed the new
-  archive opens.
+  switch the toggle, the conversion is offered the next time the vault is
+  opened with the master password (or right away while it is already
+  unlocked): a confirmation dialog appears first, then the whole archive is
+  rewritten in the new format and renamed to match (`storage.zip` ↔
+  `storage.7z`); the stored path in Settings is updated in the same step.
+  «Not now» skips the conversion — it is offered again on the next unlock, and
+  the format toggle stays as selected.
+- **After a conversion** a result dialog reports how many records were
+  migrated and where; the old-format file remains next to the archive (its
+  `.bak` too) as a leftover copy — the dialog offers to delete it once you
+  have confirmed the new archive opens. «Keep both» leaves it in place.
 - **A freshly written archive is verified before it replaces the previous
   one**: the extension checks the container magic and decrypts the new archive
   back to exactly the JSON it just serialized. A `7z` run that died mid-write
@@ -287,12 +291,12 @@ Each save also keeps a `.bak` copy of the previous archive next to it.
 
 Saves are **atomic**: the archive is first written to a temporary file next to
 it (`storage.zip.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
-renamed over the target with `GLib.rename`. A crash or power loss in the middle
-of a save leaves the previous archive (and its `.bak`) intact — the archive
-is first written to a temporary file and then atomically replaced, so a
-partial write can never overwrite the live vault. Temporary leftovers of a
-save that died mid-way are removed automatically the next time the vault is
-opened or saved.
+renamed over the target with `GLib.rename`, so a crash or power loss in the
+middle of a save leaves the previous archive (and its `.bak`) intact — a
+partial write can never overwrite the live vault. No guarantee is made that the
+very latest filesystem changes survive an abrupt power failure (no `fsync`).
+Temporary leftovers of a save that died mid-way are removed automatically the
+next time the vault is opened or saved.
 
 ### Example `data.json`
 
@@ -409,7 +413,7 @@ the original extension might add later):
 | `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP/7z archive (a folder icon at the end of the row opens a file chooser to pick the file instead of typing it) |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
-| `cwp-vault-format-7z` | boolean | `true` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and sizes; 7-Zip only) instead of the portable ZIP format. A new vault is created in this format by default; an existing archive keeps its current format until you switch it explicitly in Settings — the conversion then happens the next time the vault is opened with the master password, and the file is renamed to match (its old `.bak` stays as a recovery copy) |
+| `cwp-vault-format-7z` | boolean | `true` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and per-entry sizes; opening it requires an application with 7z support) instead of the portable ZIP format. A new vault is created in 7z by default; an existing archive keeps its current format until you switch it here — the conversion is then offered on the next unlock (or right away while the vault is unlocked) and runs once you confirm it (the archive is rewritten and renamed to match, and its old copy is kept until you delete it in the result dialog) |
 | `cwp-vault-clear-clipboard` | boolean | `true` | Automatically clear the clipboard a short time after a vault copy — but *only* while it still holds exactly the copied value, so anything you copy afterwards is left alone |
 | `cwp-vault-clear-clipboard-timeout` | integer (s) | `20` | How many seconds a value copied from the vault stays in the clipboard before the auto-clear removes it (5–300) |
 | `cwp-toggle-password-vault` | keybinding | *(none)* — assign it in the Settings → Shortcuts | Shortcut to open/close the password vault menu |
