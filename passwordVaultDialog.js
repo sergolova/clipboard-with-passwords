@@ -107,7 +107,7 @@ export const MasterPasswordDialog = GObject.registerClass(
                     text: guidance
                 });
                 mainBox.add_child(this.guidanceLabel);
-                this.entry.clutter_text.connect('changed', () => {
+                this.entry.clutter_text.connect('text-changed', () => {
                     this._updateGuidance(guidance);
                 });
             }
