@@ -3,10 +3,18 @@ import Gio from 'gi://Gio';
 import St from 'gi://St';
 import { PrefsFields } from './constants.js';
 import { logError } from './logging.js';
+import { DebouncedSaver } from './registrySaver.js';
 
 const FileQueryInfoFlags = Gio.FileQueryInfoFlags;
 const FileCopyFlags = Gio.FileCopyFlags;
 const FileTest = GLib.FileTest;
+
+// Debounce window for registry.txt persistence: bursts of clipboard events
+// (a copy can currently schedule several saves back to back) collapse into one
+// asynchronous write per window instead of one synchronous write per event —
+// synchronous writes on the clipboard hot path used to turn filesystem latency
+// into shell-UI latency.
+const SAVE_DEBOUNCE_MS = 150;
 
 export class Registry {
     constructor ({ settings, uuid }) {
@@ -16,9 +24,40 @@ export class Registry {
         this.REGISTRY_DIR = GLib.get_user_cache_dir() + '/' + this.uuid;
         this.REGISTRY_PATH = this.REGISTRY_DIR + '/' + this.REGISTRY_FILE;
         this.BACKUP_REGISTRY_PATH = this.REGISTRY_PATH + '~';
+        this._saver = new DebouncedSaver({
+            debounceMs: SAVE_DEBOUNCE_MS,
+            // 3-arg form: GLib.timeout_add(priority, interval_ms, callback) —
+            // the 2-arg shorthand throws "At least 3 arguments required" in
+            // the shell's GJS, and that throw must never surface on the
+            // clipboard hot path.
+            scheduleTimer: (ms, cb) => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, cb),
+            cancelTimer: (sourceId) => GLib.source_remove(sourceId),
+            write: (entries) => this._writeNow(entries),
+        });
     }
 
+    // Persistence is debounced and asynchronous: every call records the latest
+    // snapshot and bursts coalesce into a single future write (see
+    // DebouncedSaver for the single-writer / no-stale-overwrite guarantees).
+    // Image cache files are still written by _writeNow() as before.
     write (entries) {
+        this._saver.schedule(entries);
+    }
+
+    // Force the latest snapshot onto disk without waiting for the debounce
+    // (explicit history clear / extension shutdown). Never races the async
+    // writer: it either starts the single write immediately or queues the
+    // fresh snapshot after the one currently in flight.
+    flush () {
+        this._saver.flush();
+    }
+
+    // Runs on the main loop after the debounce window (or on flush): builds
+    // the registry payload and writes it with an asynchronous replace, so a
+    // big history never blocks the shell while serializing or writing.
+    // Failures are logged and swallowed, exactly like the old synchronous
+    // path — the in-memory history keeps working regardless.
+    async _writeNow (entries) {
         const registryContent = [];
 
         for (let entry of entries) {
@@ -44,17 +83,27 @@ export class Registry {
             if (entry.isProtected()) item.protected = true;
         }
 
-        this.writeToFile(registryContent);
-    }
-
-    writeToFile (registry) {
-        let json = JSON.stringify(registry);
-        let contents = new GLib.Bytes(json);
-
         try {
+            let json = JSON.stringify(registryContent);
+            let contents = new GLib.Bytes(json);
             GLib.mkdir_with_parents(this.REGISTRY_DIR, parseInt('0775', 8));
             let file = Gio.file_new_for_path(this.REGISTRY_PATH);
-            file.replace_contents(contents.get_data(), null, false, Gio.FileCreateFlags.NONE, null);
+            await new Promise((resolve) => {
+                // GJS >= 1.73 dropped the io_priority parameter from async GIO
+                // methods: the call is (contents, etag, make_backup, flags,
+                // cancellable, callback). Passing GLib.PRIORITY_DEFAULT here
+                // makes GJS read the number as the cancellable slot and throw.
+                file.replace_contents_async(contents, null, false,
+                                            Gio.FileCreateFlags.NONE, null,
+                                            (src, res) => {
+                    try {
+                        src.replace_contents_finish(res);
+                    } catch (e) {
+                        logError('Clipboard Indicator: failed to write registry file', e);
+                    }
+                    resolve();
+                });
+            });
         } catch (e) {
             logError('Clipboard Indicator: failed to write registry file', e);
         }
@@ -192,12 +241,15 @@ export class Registry {
         return entry.cachedFilename;
     }
 
-    async writeEntryFile (entry, rawBytes = null) {
+    async writeEntryFile (entry) {
         if (this.#entryFileComplete(entry)) return;
 
-        // The capture path passes the clipboard's own GLib.Bytes straight
-        // through, so a multi-MB payload isn't re-wrapped (and re-copied) here.
-        const bytes = rawBytes ?? await entry.asBytesAsync();
+        // Always write from the entry's own payload copy. The clipboard's
+        // GLib.Bytes must never reach an async write: it is handed to the
+        // capture callback with transfer-ownership="none" and is gone by the
+        // time this write runs, which made the write fail with a bad address
+        // and took the shell down with it.
+        const bytes = await entry.asBytesAsync();
         let file = Gio.file_new_for_path(this.getEntryFilename(entry));
 
         // Capture awaits this write before the entry reaches the menu
@@ -276,6 +328,26 @@ export class ClipboardEntry {
         return Uint8Array.from(contents.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
     }
 
+    // A cache file exists from the moment the write starts (it is created
+    // empty), so mere existence proves nothing: a write interrupted by a crash
+    // or a killed shell leaves a 0-byte file behind, and the registry that was
+    // written alongside it still points at it. Such an entry can neither be
+    // previewed nor pasted, so it is dropped on read — the history heals itself
+    // instead of carrying a permanently dead item (and permanently reserving a
+    // slot) forever.
+    static #payloadFileIsUsable (filename) {
+        if (!GLib.file_test(filename, FileTest.EXISTS))
+            return false;
+        try {
+            const info = Gio.file_new_for_path(filename)
+                .query_info('standard::size', FileQueryInfoFlags.NONE, null);
+            return info !== null && info.get_size() > 0;
+        } catch (e) {
+            logError('Clipboard Indicator: could not stat a cache file', e);
+            return false;
+        }
+    }
+
     static __isText (mimetype) {
         return mimetype.startsWith('text/') ||
             mimetype === 'STRING' ||
@@ -293,7 +365,7 @@ export class ClipboardEntry {
         }
         else {
             const filename = jsonEntry.contents;
-            if (!GLib.file_test(filename, FileTest.EXISTS)) return null;
+            if (!ClipboardEntry.#payloadFileIsUsable(filename)) return null;
 
             // Lazy image restore (EGO-X-004): do not read the payload at
             // startup. Loading every cached image synchronously would stall the

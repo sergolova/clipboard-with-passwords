@@ -18,6 +18,7 @@ import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
+import {offeredTypeCandidates} from './clipboardTypes.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
@@ -89,6 +90,13 @@ let VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
 let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
 let VAULT_RESET_SEARCH_ON_CLOSE = true;
 
+// How long the clipboard must stay quiet before a capture chain starts (and
+// how the re-capture after a queued change waits before reading again). One
+// probe chain can take a while for images (multiple mimetypes with timeouts
+// plus a PNG write), and overlapping chains racing mutter's X11 selection
+// transfers crashed the shell (see _refreshIndicator notes).
+const CAPTURE_SETTLE_MS = 120;
+
 /*
  * Strip leading/trailing whitespace from a text value according to the
  * STRIP_TEXT / STRIP_LINE_BREAKS settings:
@@ -153,9 +161,27 @@ const ClipboardIndicator = GObject.registerClass({
     GTypeName: 'ClipboardWithPasswordsIndicator'
 }, class ClipboardIndicator extends PanelMenu.Button {
     #refreshInProgress = false;
+    // Capture coalescing state, see _refreshIndicator: at most one clipboard
+    // probe chain in flight, and a new chain only after the clipboard stayed
+    // quiet for CAPTURE_SETTLE_MS.
+    #captureScheduled = false;
+    #captureQueued = false;
+    _captureSettleTimeoutId = null;
 
     destroy() {
         this._destroyed = true;
+        if (this._captureSettleTimeoutId) {
+            clearTimeout(this._captureSettleTimeoutId);
+            this._captureSettleTimeoutId = null;
+        }
+        this.#captureScheduled = false;
+        this.#captureQueued = false;
+        // Persist the latest clipboard state before the indicator goes away:
+        // a pending debounced save must not be lost when the extension is
+        // disabled (or the shell restarts right after).
+        if (this.registry) {
+            this.registry.flush();
+        }
         if (this.urlMetadataManager) {
             this.urlMetadataManager.saveCache();
         }
@@ -333,6 +359,19 @@ const ClipboardIndicator = GObject.registerClass({
         this.dialogManager = new DialogManager();
         this._vaultDialogs = [];
         this._buildMenu().then(() => {
+            if (this._destroyed) {
+                return;
+            }
+            this._updateTopbarLayout();
+            this._setupListener();
+            this._setupHistoryIntervalClearing();
+        }).catch(e => {
+            // The topbar layout, the clipboard listener and the history timer do
+            // not depend on the menu contents, so a throw anywhere in the menu
+            // construction must not leave a visible but completely dead
+            // indicator. Set them up anyway and report the failure — the menu is
+            // then built on the next settings change or reopen.
+            logError('Clipboard Indicator: menu setup failed', e);
             if (this._destroyed) {
                 return;
             }
@@ -544,8 +583,6 @@ const ClipboardIndicator = GObject.registerClass({
         if (this._destroyed) {
             return;
         }
-        let lastIdx = clipHistory.length - 1;
-        let clipItemsArr = this.clipItemsRadioGroup;
 
         /* This create the search entry, which is add to a menuItem.
         The searchEntry is connected to the function for research.
@@ -778,8 +815,16 @@ const ClipboardIndicator = GObject.registerClass({
 
         clipHistory.forEach(entry => this._addEntry(entry));
 
-        if (lastIdx >= 0) {
-            this._selectMenuItem(clipItemsArr[lastIdx]);
+        // Select the newest item that actually made it into the menu. The
+        // item array is not guaranteed to be as long as the history that was
+        // read: _addEntry() drops image entries that have no cache file and no
+        // in-memory payload, and the registry itself trims to the history-size
+        // limit. Indexing the pre-filter array therefore hands _selectMenuItem()
+        // an undefined item, which used to throw out of _buildMenu() and take
+        // the whole extension down with it — no topbar layout, no clipboard
+        // listener, nothing captured at all.
+        if (this.clipItemsRadioGroup.length > 0) {
+            this._selectMenuItem(this.clipItemsRadioGroup[this.clipItemsRadioGroup.length - 1]);
         }
 
         this.#showElements();
@@ -1739,6 +1784,11 @@ const ClipboardIndicator = GObject.registerClass({
             }
         });
 
+        // An explicit clear must hit the disk right away (the per-item
+        // _removeEntry() calls only scheduled a debounced save); same for the
+        // extension's automatic interval clear.
+        this.registry.flush();
+
         if (NOTIFY_ON_CLEAR) {
             const message = invokedAutomatically
                 ? _("Clipboard history cleared automatically")
@@ -1822,6 +1872,11 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _selectMenuItem(menuItem, autoSet) {
+        // Selecting a missing item must never throw: callers look items up by
+        // index/keyboard navigation, and an exception here would abort whatever
+        // startup path triggered the selection and leave the indicator dead.
+        if (!menuItem)
+            return;
         this._onMenuItemSelected(menuItem, autoSet);
         this.#updateIndicatorContent(menuItem.entry);
     }
@@ -1881,6 +1936,15 @@ const ClipboardIndicator = GObject.registerClass({
         if (PRIVATEMODE || this._destroyed) return; // Private mode, do not.
         if (this.ignoreNextClipboardChange) {
             this.ignoreNextClipboardChange = false;
+            // The change that just fired is the extension's own clipboard
+            // write (vault copy / wipe). It must not be captured — and since
+            // captures are delayed by the settle window, cancel the pending
+            // one so the extension's own content is never picked up.
+            if (this._captureSettleTimeoutId) {
+                clearTimeout(this._captureSettleTimeoutId);
+                this._captureSettleTimeoutId = null;
+                this.#captureScheduled = false;
+            }
             return;
         }
 
@@ -1889,9 +1953,45 @@ const ClipboardIndicator = GObject.registerClass({
 
         if (wmClass && EXCLUDED_APPS.includes(wmClass)) return; // Excluded app, do not.
 
-        if (this.#refreshInProgress) return;
-        this.#refreshInProgress = true;
+        // Capture coalescing: a burst of clipboard changes collapses into ONE
+        // probe chain that starts only after the clipboard stayed quiet for
+        // CAPTURE_SETTLE_MS, and never while another chain is still running.
+        // Before this, every change fired a fresh St.Clipboard.get_content
+        // chain back-to-back; for images a chain probes ~7 unoffered
+        // mimetypes (each up to its 200 ms timeout) and writes a PNG, so fast
+        // copy bursts piled up overlapping X11 selection transfers inside
+        // mutter. The abandoned requests raced the selection machinery's
+        // object lifetimes (repeated g_atomic_ref_count assertions) and
+        // segfaulted the whole shell ("Oh no" screen, signal 11) after ~4-5
+        // rapid image copies. Text captures resolve in milliseconds which is
+        // why they never tripped it.
+        if (this.#refreshInProgress) {
+            // A probe chain is running: remember the clipboard changed again
+            // so the chain's tail re-captures the latest state after it
+            // settles. Changes that merely arrive inside the settle window
+            // need no queueing — the armed capture reads the latest state.
+            this.#captureQueued = true;
+            return;
+        }
+        if (this.#captureScheduled) {
+            return;
+        }
+        this.#captureScheduled = true;
+        this._captureSettleTimeoutId = setTimeout(() => {
+            this._captureSettleTimeoutId = null;
+            this.#captureScheduled = false;
+            if (this._destroyed) return;
+            this._runCaptureChain();
+        }, CAPTURE_SETTLE_MS);
+    }
 
+    async _runCaptureChain() {
+        if (this._destroyed) return;
+        if (this.#refreshInProgress || this.#captureScheduled) {
+            this.#captureQueued = true;
+            return;
+        }
+        this.#refreshInProgress = true;
         try {
             const result = await this.#getClipboardContent();
             if (this._destroyed) {
@@ -1926,6 +2026,10 @@ const ClipboardIndicator = GObject.registerClass({
             logError(e);
         } finally {
             this.#refreshInProgress = false;
+            if (this.#captureQueued) {
+                this.#captureQueued = false;
+                this._refreshIndicator();
+            }
         }
     }
 
@@ -1949,6 +2053,13 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _setupListener() {
+        // Idempotent: startup can reach this from the success and from the
+        // failure branch of the menu build, and a second 'owner-changed'
+        // handler would make every clipboard change capture twice.
+        if (this._selectionOwnerChangedId) {
+            this.selection.disconnect(this._selectionOwnerChangedId);
+            this._selectionOwnerChangedId = null;
+        }
         const metaDisplay = Shell.Global.get().get_display();
         const selection = metaDisplay.get_selection();
         this._setupSelectionTracking(selection);
@@ -2859,106 +2970,114 @@ const ClipboardIndicator = GObject.registerClass({
         }
     }
 
+    // The types this capture will request, in preference order. Built from what
+    // the current owner advertises; falls back to the historical blind chain
+    // when the owner advertises nothing.
+    #offeredTypeCandidates() {
+        let offered = [];
+        try {
+            offered = this.extension.clipboard.get_mimetypes(CLIPBOARD_TYPE) ?? [];
+        } catch (e) {
+            logError('Clipboard Indicator: could not read the offered clipboard types', e);
+        }
+        return offeredTypeCandidates(offered);
+    }
+    // One request for one advertised type. Yields a ClipboardEntry, or null when
+    // the owner has nothing to give for it (unoffered, refused or empty).
+    async #readClipboardType(request, entryType) {
+        return await new Promise(resolve => {
+            let resolved = false;
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    resolve(null);
+                }
+            }, 200);
+
+            try {
+                this.extension.clipboard.get_content(CLIPBOARD_TYPE, request, async (clipBoard, bytes) => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(timeoutId);
+
+                    if (this._destroyed || bytes === null || bytes.get_size() === 0) {
+                        resolve(null);
+                        return;
+                    }
+
+                    // The GBytes arrives with transfer-ownership="none": the
+                    // clipboard only owns it for the length of this callback.
+                    // Everything below runs after an await, so take a private
+                    // copy of the payload here and let the rest of the capture
+                    // path work on that instead of the transfer buffer.
+                    try {
+                        const payload = new Uint8Array(bytes.get_data());
+                        const entry = new ClipboardEntry(entryType, payload, false);
+
+                        // Apply STRIP_TEXT / STRIP_LINE_BREAKS at capture time: the
+                        // stripped value is what gets saved to the registry and what
+                        // gets inserted back into the clipboard.
+                        if ((STRIP_TEXT || STRIP_LINE_BREAKS) && entry.isText() &&
+                            !entry.isURIList()) {
+                            const stripped = stripClipboardEdges(entry.getStringValue());
+                            if (stripped !== '') {
+                                entry.setText(stripped);
+                            } else {
+                                // Nothing left after stripping — don't store an empty
+                                // entry; fall through to check other clipboard types.
+                                resolve(null);
+                                return;
+                            }
+                        }
+
+                        if (CACHE_IMAGES && entry.isImage()) {
+                            // Write the cache file to completion BEFORE the
+                            // entry reaches the menu: the item preview reads
+                            // the file via getEntryAsTexture(), and
+                            // replace_async truncates it the moment the write
+                            // starts — reading mid-write yields an empty
+                            // thumbnail (thin white strip). A write failure
+                            // is logged but the entry still resolves (paste
+                            // works from the in-memory payload).
+                            // Written from the entry's own copy of the payload,
+                            // never from the clipboard's GBytes: this write
+                            // happens after replace_async, i.e. after the
+                            // callback that borrowed the buffer has returned.
+                            try {
+                                await this.registry.writeEntryFile(entry);
+                            } catch (e) {
+                                logError('Clipboard Indicator: failed to cache image', e);
+                            }
+                        }
+                        resolve(entry);
+                    } catch (err) {
+                        resolve(null);
+                    }
+                });
+            } catch (err) {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    resolve(null);
+                }
+            }
+        });
+    }
+
     async #getClipboardContent() {
         if (this._destroyed) return null;
 
-        const mimetypes = [
-            'text/uri-list',
-            'text/plain;charset=utf-8',
-            "UTF8_STRING",
-            "text/plain",
-            "STRING",
-            'image/gif',
-            'image/png',
-            'image/jpg',
-            'image/jpeg',
-            'image/webp',
-            'image/svg+xml',
-            'text/html',
-        ];
-
-        for (let type of mimetypes) {
+        for (const {request, entryType} of this.#offeredTypeCandidates()) {
             if (this._destroyed) return null;
 
-            let result = await new Promise(resolve => {
-                let resolved = false;
-                const timeoutId = setTimeout(() => {
-                    if (!resolved) {
-                        resolved = true;
-                        resolve(null);
-                    }
-                }, 200);
+            const result = await this.#readClipboardType(request, entryType);
+            if (!result)
+                continue;
 
-                try {
-                    this.extension.clipboard.get_content(CLIPBOARD_TYPE, type, async (clipBoard, bytes) => {
-                        if (resolved) return;
-                        resolved = true;
-                        clearTimeout(timeoutId);
+            if (!CACHE_IMAGES && result.isImage())
+                return null;
 
-                        if (this._destroyed || bytes === null || bytes.get_size() === 0) {
-                            resolve(null);
-                            return;
-                        }
-
-                        if (type === "UTF8_STRING") {
-                            type = "text/plain;charset=utf-8";
-                        }
-
-                        try {
-                            const entry = new ClipboardEntry(type, bytes.get_data(), false);
-
-                            // Apply STRIP_TEXT / STRIP_LINE_BREAKS at capture time: the
-                            // stripped value is what gets saved to the registry and what
-                            // gets inserted back into the clipboard.
-                            if ((STRIP_TEXT || STRIP_LINE_BREAKS) && entry.isText() &&
-                                !entry.isURIList()) {
-                                const stripped = stripClipboardEdges(entry.getStringValue());
-                                if (stripped !== '') {
-                                    entry.setText(stripped);
-                                } else {
-                                    // Nothing left after stripping — don't store an empty
-                                    // entry; fall through to check other clipboard types.
-                                    resolve(null);
-                                    return;
-                                }
-                            }
-
-                            if (CACHE_IMAGES && entry.isImage()) {
-                                // Write the cache file to completion BEFORE the
-                                // entry reaches the menu: the item preview reads
-                                // the file via getEntryAsTexture(), and
-                                // replace_async truncates it the moment the write
-                                // starts — reading mid-write yields an empty
-                                // thumbnail (thin white strip). A write failure
-                                // is logged but the entry still resolves (paste
-                                // works from the in-memory payload).
-                                try {
-                                    await this.registry.writeEntryFile(entry, bytes);
-                                } catch (e) {
-                                    logError('Clipboard Indicator: failed to cache image', e);
-                                }
-                            }
-                            resolve(entry);
-                        } catch (err) {
-                            resolve(null);
-                        }
-                    });
-                } catch (err) {
-                    if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timeoutId);
-                        resolve(null);
-                    }
-                }
-            });
-
-            if (result) {
-                if (!CACHE_IMAGES && result.isImage()) {
-                    return null;
-                } else {
-                    return result;
-                }
-            }
+            return result;
         }
 
         return null;
