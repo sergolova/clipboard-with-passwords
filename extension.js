@@ -1111,7 +1111,7 @@ const ClipboardIndicator = GObject.registerClass({
                 menuItem._twoLineBox = null;
             }
             const colorText = entry.getStringValue().trim();
-            const cssColor = entry.needsHashPrefix(colorText) ? ('#' + colorText) : colorText;
+            const cssColor = entry.needsHashPrefix() ? ('#' + colorText) : colorText;
             const box = new St.BoxLayout({
                 vertical: false,
                 x_expand: true,

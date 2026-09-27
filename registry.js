@@ -16,6 +16,47 @@ const FileTest = GLib.FileTest;
 // into shell-UI latency.
 const SAVE_DEBOUNCE_MS = 150;
 
+// CSS named colors, one shared set. isColor() used to build this 148-entry Set
+// on every call — and isColor() runs several times per entry per menu refresh —
+// so each classification pass allocated and re-hashed the whole table.
+const CSS_NAMED_COLORS = new Set([
+    'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
+    'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue',
+    'chartreuse', 'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan',
+    'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey',
+    'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred',
+    'darksalmon', 'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey',
+    'darkturquoise', 'darkviolet', 'deeppink', 'deepskyblue', 'dimgray', 'dimgrey',
+    'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro',
+    'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow', 'grey',
+    'honeydew', 'hotpink', 'indianred', 'indigo', 'ivory', 'khaki', 'lavender',
+    'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
+    'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink',
+    'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey',
+    'lightsteelblue', 'lightyellow', 'lime', 'limegreen', 'linen', 'magenta',
+    'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
+    'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
+    'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin',
+    'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange', 'orangered',
+    'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred',
+    'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple',
+    'rebeccapurple', 'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon',
+    'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver', 'skyblue', 'slateblue',
+    'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal',
+    'thistle', 'tomato', 'transparent', 'turquoise', 'violet', 'wheat', 'white',
+    'whitesmoke', 'yellow', 'yellowgreen'
+]);
+
+// Compiled once at module load instead of on every isColor() call: four regex
+// passes per classification are only worth paying for entries that already
+// passed the cheap length gate, but recompiling them was pure overhead.
+const COLOR_HEX_REGEX = /^[0-9a-f]+$/;
+const COLOR_RGB_REGEX = /^rgba?\(\s*\d+\s*[\s,]\s*\d+\s*[\s,]\s*\d+\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
+const COLOR_HSL_REGEX = /^hsla?\(\s*\d+(?:deg)?\s*[\s,]\s*\d+%\s*[\s,]\s*\d+%\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+const HEX_LENGTHS = new Set([3, 4, 6, 8]);
+
 export class Registry {
     constructor ({ settings, uuid }) {
         this.uuid = uuid;
@@ -313,6 +354,18 @@ export class Registry {
 export class ClipboardEntry {
     #mimetype;
     #bytes;
+    // Decoded text and the derived forms every classifier needs. One menu
+    // refresh used to decode the payload again for clipContents, isColor(),
+    // isMultiline(), isURL() and the URL branch — five full TextDecoder passes
+    // over the same bytes per entry, plus one more when the registry is
+    // serialized. All of them are pure functions of #bytes, so they are
+    // computed once and dropped by setText().
+    #textCache = null;
+    #trimmedCache = null;
+    #foldedCache = null;
+    // Content-type classification, resolved in one pass and reused: each
+    // isX() used to redo trim()/toLowerCase() and re-run its own regex.
+    #classification = null;
     // Cache-file path for lazily-restored image entries (set by fromJSON; null
     // for in-memory entries). Lets getEntryFilename()/getStringValue() work
     // without touching the payload.
@@ -403,14 +456,93 @@ export class ClipboardEntry {
             .join('');
     }
 
+    // The decoded payload, decoded at most once per payload. isImage() is
+    // checked first: an image entry's "string" is a synthesized [Image <hash>]
+    // placeholder, and building it hashes the whole payload.
     getStringValue () {
+        if (this.#textCache !== null)
+            return this.#textCache;
+
         if (this.isImage()) {
             const hash = this.#storedFilename
                 ? this.#storedFilename.slice(this.#storedFilename.lastIndexOf('/') + 1)
                 : this.asBytes().hash();
-            return `[Image ${hash}]`;
+            return this.#textCache = `[Image ${hash}]`;
         }
-        return new TextDecoder().decode(this.#bytes);
+        return this.#textCache = new TextDecoder().decode(this.#bytes);
+    }
+
+    // getStringValue().trim() — a pass the classifiers and the renderers both
+    // need, so it is cached alongside the decoded text.
+    #trimmed () {
+        if (this.#trimmedCache === null)
+            this.#trimmedCache = this.getStringValue().trim();
+        return this.#trimmedCache;
+    }
+
+    // getStringValue().trim().toLowerCase() — the folded form the URL and
+    // color checks match against.
+    #folded () {
+        if (this.#foldedCache === null)
+            this.#foldedCache = this.#trimmed().toLowerCase();
+        return this.#foldedCache;
+    }
+
+    // Every classifier in one pass, resolved lazily on first use. The keys
+    // depend only on the payload, so they are computed exactly once per entry
+    // and never recomputed while the menu re-reads them.
+    #classify () {
+        if (this.#classification !== null)
+            return this.#classification;
+
+        const flags = {
+            url: false,
+            email: false,
+            multiline: false,
+            color: false,
+            hashPrefix: false
+        };
+
+        if (this.isText() && !this.isURIList()) {
+            const trimmed = this.#trimmed();
+            const folded = this.#folded();
+
+            flags.url = folded.startsWith('http://') || folded.startsWith('https://');
+            flags.multiline = trimmed.includes('\n');
+
+            // Email cannot contain a slash or start with a dot — cheap gate
+            // before the regex.
+            if (!trimmed.includes('/') && !trimmed.startsWith('.'))
+                flags.email = EMAIL_REGEX.test(trimmed);
+
+            // Color: length gate first (longest CSS name is
+            // 'lightgoldenrodyellow', 20 chars), then named colors, hex, rgb,
+            // hsl. Each step only matters once the entry looks like a color.
+            if (trimmed.length > 0 && trimmed.length <= 50) {
+                const hasHash = folded.startsWith('#');
+                const hex = hasHash ? folded.slice(1) : folded;
+
+                if (CSS_NAMED_COLORS.has(folded)) {
+                    flags.color = true;
+                } else if (HEX_LENGTHS.has(hex.length) && COLOR_HEX_REGEX.test(hex)) {
+                    // Hex: with a leading '#' any hex digits qualify, without
+                    // it there must be a letter a-f, so pure decimals are not
+                    // mistaken for colors.
+                    flags.color = hasHash || /[a-f]/.test(hex);
+                } else {
+                    flags.color = COLOR_RGB_REGEX.test(folded) || COLOR_HSL_REGEX.test(folded);
+                }
+
+                // A hex value is a color, and a bare one additionally needs the
+                // '#' to be usable as CSS — so this cannot simply be the
+                // negation of hasHash: pure decimals like "123" are not colors
+                // and must not be flagged.
+                flags.hashPrefix = flags.color && !hasHash &&
+                    HEX_LENGTHS.has(hex.length) && COLOR_HEX_REGEX.test(hex);
+            }
+        }
+
+        return this.#classification = flags;
     }
 
     mimetype () {
@@ -454,109 +586,26 @@ export class ClipboardEntry {
     }
 
     isURL () {
-        if (!this.isText() || this.isURIList()) return false;
-        const text = this.getStringValue().trim().toLowerCase();
-        return text.startsWith('http://') || text.startsWith('https://');
+        return this.#classify().url;
     }
 
     isEmail () {
-        if (!this.isText() || this.isURIList()) return false;
-        const text = this.getStringValue().trim();
-
-        // Быстрая проверка: email не может содержать слэши или начинаться с /
-        if (text.includes('/') || text.startsWith('.')) return false;
-
-        // Регулярка с запретом спецсимволов и путей
-        const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
-
-        return emailRegex.test(text);
+        return this.#classify().email;
     }
 
     isMultiline () {
-        if (!this.isText() || this.isURIList()) return false;
-        return this.getStringValue().trim().includes('\n');
+        return this.#classify().multiline;
     }
 
     isColor () {
-        const CSS_NAMED_COLORS = new Set([
-            'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
-            'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue',
-            'chartreuse', 'chocolate', 'coral', 'cornflowerblue', 'cornsilk', 'crimson', 'cyan',
-            'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey',
-            'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred',
-            'darksalmon', 'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey',
-            'darkturquoise', 'darkviolet', 'deeppink', 'deepskyblue', 'dimgray', 'dimgrey',
-            'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro',
-            'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow', 'grey',
-            'honeydew', 'hotpink', 'indianred', 'indigo', 'ivory', 'khaki', 'lavender',
-            'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
-            'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink',
-            'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey',
-            'lightsteelblue', 'lightyellow', 'lime', 'limegreen', 'linen', 'magenta',
-            'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
-            'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
-            'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin',
-            'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange', 'orangered',
-            'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred',
-            'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple',
-            'rebeccapurple', 'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon',
-            'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver', 'skyblue', 'slateblue',
-            'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal',
-            'thistle', 'tomato', 'transparent', 'turquoise', 'violet', 'wheat', 'white',
-            'whitesmoke', 'yellow', 'yellowgreen'
-        ]);
-
-        if (!this.isText() || this.isURIList()) return false;
-        const text = this.getStringValue().trim().toLowerCase();
-
-        // Быстрый отсекатель по длине (самое длинное имя 'lightgoldenrodyellow' = 20 символов)
-        if (text.length === 0 || text.length > 50) return false;
-
-        // 1. Именованные CSS-цвета
-        if (CSS_NAMED_COLORS.has(text)) return true;
-
-        // 2. HEX с альфа-каналом (3, 4, 6, 8 символов; с # или без #)
-        // Если начинается с # — подходят любые HEX-символы (включая чисто цифровые, напр. #123)
-        // Если без # — обязательно наличие хотя бы одной буквы a-f (чтобы отсеять чисто десятичные числа вроде 123)
-        const hasHash = text.startsWith('#');
-        const cleanText = hasHash ? text.slice(1) : text;
-           
-        if ([3, 4, 6, 8].includes(cleanText.length)) {
-            if (hasHash && /^[0-9a-f]+$/.test(cleanText)) {
-                return true;
-            }
-            if (!hasHash && /^[0-9a-f]+$/.test(cleanText) && /[a-f]/.test(cleanText)) {
-                return true;
-            }
-        }
-
-        // 3. RGB / RGBA (поддержка классического формата с запятыми и современного без них)
-        // Примеры: rgb(255, 0, 0), rgba(255, 0, 0, 0.5), rgb(255 0 0 / 50%)
-        const rgbRegex = /^rgba?\(\s*\d+\s*[\s,]\s*\d+\s*[\s,]\s*\d+\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
-        if (rgbRegex.test(text)) return true;
-
-        // 4. HSL / HSLA (поддержка процентов и альфа-канала)
-        // Примеры: hsl(120, 100%, 50%), hsla(120, 100%, 50%, 0.3), hsl(180deg 20% 50% / 80%)
-        const hslRegex = /^hsla?\(\s*\d+(?:deg)?\s*[\s,]\s*\d+%\s*[\s,]\s*\d+%\s*(?:[\s,\/]\s*(?:0?\.\d+|1|0|\d+%))?\s*\)$/;
-        if (hslRegex.test(text)) return true;
-
-        return false;
+        return this.#classify().color;
     }
 
+    // True when the entry is a bare hex color that needs a '#' to become a
+    // valid CSS value. Both answers are produced by the single cached
+    // classification pass instead of re-testing isColor() here.
     needsHashPrefix() {
-        if (!this.isColor()) return false;
-
-        const text = this.getStringValue().trim();
-
-        // Если уже есть #, добавка не нужна
-        if (text.startsWith('#')) return false;
-
-        // Проверяем, является ли строка HEX-кодом без решётки
-        const cleanText = text.toLowerCase();
-        const isHexLength = [3, 4, 6, 8].includes(cleanText.length);
-        const isPureHex = /^[0-9a-f]+$/.test(cleanText);
-
-        return isHexLength && isPureHex;
+        return this.#classify().hashPrefix;
     }
 
     parseURIList () {
@@ -613,6 +662,11 @@ export class ClipboardEntry {
     setText (text) {
         if (!this.isText()) return;
         this.#bytes = new TextEncoder().encode(text);
+        // The payload is new, so every value derived from it is stale.
+        this.#textCache = null;
+        this.#trimmedCache = null;
+        this.#foldedCache = null;
+        this.#classification = null;
     }
 
     #tag = null;
@@ -656,6 +710,10 @@ export class ClipboardEntry {
         });
         if (!success || !contents)
             throw new Error(`clipboard image cache file missing: ${this.#storedFilename}`);
+        // Caches are deliberately not dropped here: this only ever runs for a
+        // lazily-restored image entry, and an image's string value and
+        // classification are derived from the cache file *name*, not from these
+        // bytes, so nothing that is cached can go stale.
         this.#bytes = contents;
         return GLib.Bytes.new(contents);
     }
