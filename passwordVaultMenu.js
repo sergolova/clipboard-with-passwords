@@ -9,6 +9,7 @@ import { ServiceEditDialog } from './passwordVaultDialog.js';
 import { PrefsFields } from './constants.js';
 import { ALL_CATEGORY } from './passwordVault.js';
 import { themeColors } from './theme.js';
+import { planCardUpdate } from './cardReconciler.js';
 
 // A hidden (password / isHidden) field value that starts or ends with
 // whitespace (space, tab, line breaks) or a non-printable character
@@ -30,8 +31,14 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
         this.currentQuery = '';
         this.selectedCategory = ALL_CATEGORY;
-        this.serviceCardEntries = []; // Array of { item, actor }
+        // One record per service card, in display order. See _createServiceCard
+        // for the fields; the reconciler compares them to decide what a refresh
+        // actually has to touch.
+        this.serviceCardEntries = [];
         this._revealHint = null; // "Type to reveal services…" label (hide-All mode)
+        this._revealHintPalette = null; // the palette it was styled with
+        this._emptyLabel = null; // "Vault is empty…" label (no services at all)
+        this._emptyLabelPalette = null; // the palette it was styled with
 
         this._buildUI();
     }
@@ -79,7 +86,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             this._updateCategoryButtonsUI();
         }
         this._updateRecentBanner();
-        this._renderAllCards();
+        this._syncCards();
     }
 
     _rebuildCategoryBar() {
@@ -187,7 +194,14 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
 
     _buildUI() {
         this.removeAll();
+        // removeAll() tore the whole container down with the menu items, so the
+        // card list has to be forgotten rather than reconciled against actors
+        // that no longer exist.
         this.serviceCardEntries = [];
+        this._emptyLabel = null;
+        this._emptyLabelPalette = null;
+        this._revealHint = null;
+        this._revealHintPalette = null;
 
         let container = new St.BoxLayout({
             vertical: true,
@@ -284,7 +298,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.itemsScrollView.set_child(this.itemsBox);
         container.add_child(this.itemsScrollView);
 
-        this._renderAllCards();
+        this._syncCards();
     }
 
     _updateRecentBanner() {
@@ -334,15 +348,15 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.recentBox.add_child(recentHeader);
 
         if (recent.login) {
-            this.recentBox.add_child(this._createFieldRow(recent, _('Login'), recent.login, 'login'));
+            this.recentBox.add_child(this._createFieldRow(null, recent, _('Login'), recent.login, 'login'));
         }
         if (recent.password) {
-            this.recentBox.add_child(this._createFieldRow(recent, _('Password'), recent.password, 'password', true));
+            this.recentBox.add_child(this._createFieldRow(null, recent, _('Password'), recent.password, 'password', true));
         }
         if (recent.extraFields && recent.extraFields.length > 0) {
             recent.extraFields.forEach((f, idx) => {
                 if (f.value) {
-                    this.recentBox.add_child(this._createFieldRow(recent, f.label || _('Extra field'), f.value, `extra_${idx}`, !!f.isHidden));
+                    this.recentBox.add_child(this._createFieldRow(null, recent, f.label || _('Extra field'), f.value, `extra_${idx}`, !!f.isHidden));
                 }
             });
         }
@@ -359,30 +373,194 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this._applyFilter();
     }
 
-    _renderAllCards() {
-        this.itemsBox.destroy_all_children();
-        this.serviceCardEntries = [];
-        this._revealHint = null;
-
+    // Bring the card list in line with the vault contents, touching only what
+    // actually changed. The decision of *what* to touch is made by
+    // planCardUpdate(); this method does the actor work for that plan.
+    _syncCards() {
         const items = this.vaultManager.getItems('', ''); // All items
-
-        if (items.length === 0) {
-            let emptyLabel = new St.Label({
-                text: _('Vault is empty. Press + to add a service.'),
-                style: `color: ${themeColors().hint}; font-size: 12px; padding: 16px;`,
-                x_align: Clutter.ActorAlign.CENTER
-            });
-            this.itemsBox.add_child(emptyLabel);
-            return;
-        }
-
-        items.forEach(item => {
-            const cardActor = this._createServiceCard(item);
-            this.itemsBox.add_child(cardActor);
-            this.serviceCardEntries.push({ item, actor: cardActor });
+        // Read the palette and the style-relevant setting once: both reach into
+        // the theme / GSettings, and a large vault would otherwise pay for them
+        // per card.
+        const palette = themeColors();
+        const styleKey = this._cardStyleKey();
+        this._dropStaleLabels(palette);
+        const plan = planCardUpdate(this.serviceCardEntries, items, {
+            palette,
+            styleKey,
+            inStage: !!this.itemsBox && this.itemsBox.get_stage() !== null
         });
 
+        // 1. Retire the cards whose service is gone. destroy() detaches them
+        //    from the container, so the remaining cards close the gap on their
+        //    own and none of them moves.
+        for (const record of plan.removed)
+            record.card.destroy();
+
+        // 2. Refill the cards whose service changed, in place. The card actor
+        //    itself stays alive, so its slot, its scroll anchor and its
+        //    position are untouched.
+        for (const { record, item } of plan.update) {
+            record.item = item;
+            record.palette = palette;
+            record.styleKey = styleKey;
+            this._populateServiceCard(record, item);
+        }
+
+        // 3. Re-apply the palette to the cards whose content is still correct.
+        for (const record of plan.restyle) {
+            this._restyleCard(record);
+            record.palette = palette;
+        }
+
+        // 4. Build the new cards, then attach each one directly above the card
+        //    that has to follow it. Walking backwards guarantees that "the card
+        //    below" is already attached. A reorder is only needed for cards that
+        //    survived but whose slot moved, and the plan reports whether that
+        //    happened at all.
+        const records = plan.order.map(slot => {
+            if (!slot.isNew)
+                return slot.record;
+            slot.record = this._createServiceCard(slot.item, palette, styleKey);
+            return slot.record;
+        });
+        for (let i = records.length - 1; i >= 0; i--) {
+            if (plan.order[i].isNew)
+                this._attachCardAt(records, i, records[i].card);
+        }
+        if (plan.reordered)
+            this._reorderCards(records);
+        this.serviceCardEntries = records;
+
+        // 5. The empty state is not a card, so it is managed on its own.
+        this._updateEmptyState(items.length === 0, palette);
+
         this._applyFilter();
+    }
+
+    // Everything a card bakes into its own children that is not colour. The
+    // hidden-edge warning icon is opt-in and its presence depends on a setting,
+    // so a settings change has to invalidate the cards: a card that survived a
+    // refresh is one that would now be built exactly the same way, and an icon
+    // that has to appear or disappear cannot be produced by restyling.
+    _cardStyleKey() {
+        return this._hiddenEdgeWarning ? 'warn' : 'nowarn';
+    }
+
+    // Put `actor` into the container so that it becomes card number `index`.
+    // `records` is the final sequence, so the card that has to follow is
+    // records[index + 1]; after the last card comes whichever standalone label —
+    // the empty state or the hide-All hint — is on screen.
+    _attachCardAt(records, index, actor) {
+        const next = records[index + 1];
+        const below = next ? next.card : this._trailingLabel();
+        if (below)
+            this.itemsBox.insert_child_below(actor, below);
+        else
+            this.itemsBox.insert_child_above(actor, null);
+    }
+
+    // The non-card child that always belongs below every card.
+    _trailingLabel() {
+        return this._revealHint ?? this._emptyLabel ?? null;
+    }
+
+    // A re-theme has to reach the two standalone labels as well — they bake
+    // themeColors() into their style once, and are not restyled in place like the
+    // cards are. Each is a single actor, and the list is either empty or fully
+    // hidden whenever one of them is on screen, so dropping it costs nothing and
+    // the normal path builds it again with the palette that is current now.
+    _dropStaleLabels(palette) {
+        if (this._emptyLabel && this._emptyLabelPalette !== palette) {
+            this._emptyLabel.destroy();
+            this._emptyLabel = null;
+        }
+        if (this._revealHint && this._revealHintPalette !== palette) {
+            this._revealHint.destroy();
+            this._revealHint = null;
+        }
+    }
+
+    // Walk the cards into the order the model asked for, moving only the ones
+    // that are not already above the card that has to follow them.
+    //
+    // St.BoxLayout in this GNOME version exposes no reorder API — its GIR only
+    // overrides get/set_pack_start and vertical — and Clutter has no
+    // insert_child_at_index any more, so a move is a detach plus an insert. The
+    // actor and everything inside it survive that, which is the whole point.
+    _reorderCards(records) {
+        const wanted = new Set(records.map(record => record.card));
+
+        // Cheap all-clear: the cards already stand in the wanted relative
+        // order, which is the normal case. The empty-state and reveal-hint
+        // labels are not cards, so they are skipped over rather than counted.
+        const children = this.itemsBox.get_children();
+        let cursor = 0;
+        let alreadyOrdered = true;
+        for (const child of children) {
+            if (!wanted.has(child))
+                continue;
+            if (child !== records[cursor].card) {
+                alreadyOrdered = false;
+                break;
+            }
+            cursor++;
+        }
+        if (alreadyOrdered)
+            return;
+
+        for (let i = records.length - 1; i >= 0; i--) {
+            const actor = records[i].card;
+            const below = records[i + 1] ? records[i + 1].card : this._trailingLabel();
+
+            // Re-read the children: every move shifts the positions after it.
+            const current = this.itemsBox.get_children();
+            const at = current.indexOf(actor);
+            const belowAt = below ? current.indexOf(below) : current.length;
+            if (at === belowAt - 1)
+                continue;
+
+            this.itemsBox.remove_child(actor);
+            if (below)
+                this.itemsBox.insert_child_below(actor, below);
+            else
+                this.itemsBox.insert_child_above(actor, null);
+        }
+    }
+
+    _updateEmptyState(isEmpty, palette) {
+        if (isEmpty && !this._emptyLabel) {
+            this._emptyLabel = new St.Label({
+                text: _('Vault is empty. Press + to add a service.'),
+                style: `color: ${palette.hint}; font-size: 12px; padding: 16px;`,
+                x_align: Clutter.ActorAlign.CENTER
+            });
+            this._emptyLabelPalette = palette;
+            this.itemsBox.add_child(this._emptyLabel);
+        } else if (!isEmpty && this._emptyLabel) {
+            this._emptyLabel.destroy();
+            this._emptyLabel = null;
+        }
+    }
+
+    // Hide every value the user revealed. Called when vault mode is entered, so
+    // a secret revealed during an earlier visit is not still on screen when the
+    // menu comes back — the same property the full rebuild used to give for
+    // free, and the one thing incremental updates would otherwise leak.
+    _remaskRevealedValues() {
+        for (const record of this.serviceCardEntries) {
+            for (const remask of record.remask)
+                remask();
+        }
+    }
+
+    // Re-apply every theme-dependent style on a live card. The style strings are
+    // rebuilt on demand, so this always reflects the palette that is active
+    // now rather than the one that was active when the card was created.
+    _restyleCard(record) {
+        for (const { actor, build } of record.styled) {
+            if (actor)
+                actor.style = build();
+        }
     }
 
     _applyFilter() {
@@ -390,7 +568,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         const cat = this.selectedCategory;
 
         let visibleCount = 0;
-        this.serviceCardEntries.forEach(({ item, actor }) => {
+        this.serviceCardEntries.forEach(({ item, card }) => {
             let matchCat = (cat === ALL_CATEGORY || item.category === cat);
             if (cat === ALL_CATEGORY && this._hideAllCategory && !q) {
                 matchCat = false;
@@ -410,7 +588,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             }
 
             const visible = matchCat && matchQuery;
-            actor.visible = visible;
+            card.visible = visible;
             if (visible) visibleCount++;
         });
 
@@ -423,11 +601,13 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             !q &&
             this.serviceCardEntries.length > 0;
         if (showRevealHint && !this._revealHint) {
+            const palette = themeColors();
             this._revealHint = new St.Label({
                 text: _('Type to reveal services…'),
-                style: `color: ${themeColors().hint}; font-size: 12px; padding: 16px;`,
+                style: `color: ${palette.hint}; font-size: 12px; padding: 16px;`,
                 x_align: Clutter.ActorAlign.CENTER
             });
+            this._revealHintPalette = palette;
             this.itemsBox.add_child(this._revealHint);
         } else if (!showRevealHint && this._revealHint) {
             this._revealHint.destroy();
@@ -435,12 +615,39 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         }
     }
 
-    _createServiceCard(item) {
+    // A card record: the service it shows, the actor that shows it, and enough
+    // bookkeeping to refresh it without throwing it away. `palette` and
+    // `styleKey` are what the card was built with, so the reconciler can tell
+    // "nothing moved" from "only the colours moved".
+    _createServiceCard(item, palette, styleKey) {
+        const record = {
+            id: item.id,
+            item,
+            palette,
+            styleKey,
+            card: new St.BoxLayout({ vertical: true }),
+            // Theme-dependent inline styles, as thunks: the string is produced on
+            // demand, so a re-theme can re-apply it without rebuilding the card.
+            styled: [],
+            // Closures that put a revealed value back behind its dots.
+            remask: []
+        };
+        this._populateServiceCard(record, item);
+        return record;
+    }
+
+    // (Re)build the contents of a card. The card actor is created once and kept
+    // for the rest of the card's life, so its slot in the list, its scroll
+    // anchor and its identity all survive a content change.
+    _populateServiceCard(record, item) {
         const c = themeColors();
-        let card = new St.BoxLayout({
-            vertical: true,
-            style: `background-color: ${c.cardBg}; border-radius: 6px; padding: 8px; border: 1px solid ${c.cardBorder};`
-        });
+        const card = record.card;
+        card.destroy_all_children();
+        record.styled.length = 0;
+        record.remask.length = 0;
+
+        card.style = this._cardStyle();
+        record.styled.push({ actor: card, build: () => this._cardStyle() });
 
         // Title bar: [категория] название
         let titleBar = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
@@ -451,6 +658,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 style: `font-size: 11px; color: ${c.secondary};`,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_align: Clutter.ActorAlign.START
+            });
+            record.styled.push({
+                actor: catLabel,
+                build: () => `font-size: 11px; color: ${themeColors().secondary};`
             });
             titleBar.add_child(catLabel);
         }
@@ -515,30 +726,39 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 x_expand: true
             });
             descLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            record.styled.push({
+                actor: descLabel,
+                build: () => `font-size: 12px; color: ${themeColors().desc}; padding: 0 2px; margin-bottom: 2px;`
+            });
             card.add_child(descLabel);
         }
 
         // Login row
         if (item.login) {
-            card.add_child(this._createFieldRow(item, _('Login'), item.login, 'login'));
+            card.add_child(this._createFieldRow(record, item, _('Login'), item.login, 'login'));
         }
 
         // Password row
         if (item.password) {
-            card.add_child(this._createFieldRow(item, _('Password'), item.password, 'password', true));
+            card.add_child(this._createFieldRow(record, item, _('Password'), item.password, 'password', true));
         }
 
         // Extra fields
         if (item.extraFields && item.extraFields.length > 0) {
             item.extraFields.forEach((field, index) => {
-                card.add_child(this._createFieldRow(item, field.label || `${_('Extra')} ${index + 1}`, field.value, `extra_${index}`, !!field.isHidden));
+                card.add_child(this._createFieldRow(record, item, field.label || `${_('Extra')} ${index + 1}`, field.value, `extra_${index}`, !!field.isHidden));
             });
         }
-
-        return card;
     }
 
-    _createFieldRow(item, labelStr, valueStr, fieldName = 'name', isPassword = false) {
+    _cardStyle() {
+        const c = themeColors();
+        return `background-color: ${c.cardBg}; border-radius: 6px; padding: 8px; border: 1px solid ${c.cardBorder};`;
+    }
+
+    // `record` is null for the recent-service banner, which is rebuilt from
+    // scratch on every change and so has nothing to restyle or re-mask.
+    _createFieldRow(record, item, labelStr, valueStr, fieldName = 'name', isPassword = false) {
         let rowBtn = new St.Button({
             style_class: 'button',
             style: 'padding: 4px; border-radius: 4px; margin: 1px 0;',
@@ -562,6 +782,12 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             x_align: Clutter.ActorAlign.START
         });
         labelWidget.set_width(70);
+        if (record) {
+            record.styled.push({
+                actor: labelWidget,
+                build: () => `font-size: 11px; color: ${themeColors().key};`
+            });
+        }
 
         let valueWidget = new St.Label({
             text: isPassword ? '••••••••' : valueStr,
@@ -591,6 +817,12 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 y_align: Clutter.ActorAlign.CENTER,
                 accessible_name: _('Warning: value has hidden leading or trailing characters')
             });
+            if (record) {
+                record.styled.push({
+                    actor: warnIcon,
+                    build: () => `color: ${themeColors().warn};`
+                });
+            }
             row.add_child(warnIcon);
         }
 
@@ -604,12 +836,26 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                     icon_size: 12
                 })
             });
-            toggleBtn.connect('clicked', () => {
-                showState.hidden = !showState.hidden;
-                valueWidget.set_text(showState.hidden ? '••••••••' : valueStr);
+            const MASK = '••••••••';
+            const applyHiddenState = () => {
+                valueWidget.set_text(showState.hidden ? MASK : valueStr);
                 toggleBtn.child.icon_name = showState.hidden ? 'view-reveal-symbolic' : 'view-conceal-symbolic';
                 toggleBtn.accessible_name = showState.hidden ? _('Reveal value') : _('Hide value');
+            };
+            toggleBtn.connect('clicked', () => {
+                showState.hidden = !showState.hidden;
+                applyHiddenState();
             });
+            if (record) {
+                // Lets the card put every revealed value back behind its dots
+                // when vault mode is re-entered.
+                record.remask.push(() => {
+                    if (!showState.hidden) {
+                        showState.hidden = true;
+                        applyHiddenState();
+                    }
+                });
+            }
             row.add_child(toggleBtn);
         }
 

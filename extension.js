@@ -2668,6 +2668,11 @@ const ClipboardIndicator = GObject.registerClass({
 
         if (this.passwordVaultMenuSection) {
             this.passwordVaultMenuSection.refreshUI();
+            // Cards now survive a refresh instead of being rebuilt, so anything
+            // the user revealed during an earlier visit would still be on screen.
+            // Put it back behind its dots on the way in, exactly as the old
+            // full rebuild did implicitly.
+            this.passwordVaultMenuSection._remaskRevealedValues();
         }
         this.#showElements();
 
