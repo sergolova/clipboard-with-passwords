@@ -732,9 +732,4 @@ export class ClipboardEntry {
             throw new Error('entry payload not loaded; use asBytesAsync()');
         return GLib.Bytes.new(this.#bytes);
     }
-
-    equals (otherEntry) {
-        return this.getStringValue() === otherEntry.getStringValue();
-        // this.asBytes().equal(otherEntry.asBytes());
-    }
 }

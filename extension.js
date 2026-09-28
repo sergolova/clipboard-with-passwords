@@ -19,6 +19,7 @@ import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {offeredTypeCandidates} from './clipboardTypes.js';
+import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
@@ -1136,11 +1137,10 @@ const ClipboardIndicator = GObject.registerClass({
         } else if (entry.isMultiline()) {
             menuItem.label.hide();
 
-            const rawLines = entry.getStringValue().split('\n');
-            // Trim whitespace and skip empty lines
-            const nonEmptyLines = rawLines
-                .map(l => l.trim())
-                .filter(l => l.length > 0);
+            // First two non-empty lines plus their total count: the menu never
+            // shows more, and collecting only those keeps a multi-megabyte
+            // entry from being exploded into a full line list per render.
+            const {first, second, count} = scanPreviewLines(entry.getStringValue());
 
             // Protected (***) multiline items: mask every displayed line so
             // no content leaks through the two-line preview.
@@ -1150,16 +1150,16 @@ const ClipboardIndicator = GObject.registerClass({
                 return text.slice(0, -3) + '***';
             };
 
-            const line1Text = nonEmptyLines.length > 0
-                ? this._truncate(displayLine(nonEmptyLines[0]), MAX_ENTRY_LENGTH)
+            const line1Text = count > 0
+                ? this._truncate(displayLine(first), MAX_ENTRY_LENGTH)
                 : '';
 
-            let line2Text = nonEmptyLines.length > 1
-                ? this._truncate(displayLine(nonEmptyLines[1]), MAX_ENTRY_LENGTH)
+            let line2Text = count > 1
+                ? this._truncate(displayLine(second), MAX_ENTRY_LENGTH)
                 : '';
 
-            if (nonEmptyLines.length > 2) {
-                line2Text += `   (${nonEmptyLines.length} ${_('lines')})`;
+            if (count > 2) {
+                line2Text += `   (${count} ${_('lines')})`;
             }
 
             this._renderTwoLineBox(menuItem, line1Text, line2Text);
@@ -1999,8 +1999,15 @@ const ClipboardIndicator = GObject.registerClass({
             }
 
             if (result) {
+                // The duplicate check walks the whole history, so the freshly
+                // captured payload is decoded once here and then compared
+                // against the text every menu item already keeps. Asking each
+                // item's entry for its own text instead re-derived the same
+                // string once per item, so copying something new into a
+                // 20-entry history decoded the same clipboard 20 times.
+                const resultText = result.getStringValue();
                 for (let menuItem of this.clipItemsRadioGroup) {
-                    if (menuItem.entry.equals(result)) {
+                    if (menuItem.clipContents === resultText) {
                         this._selectMenuItem(menuItem, false);
 
                         if (!menuItem.entry.isFavorite() && MOVE_ITEM_FIRST) {
