@@ -12,6 +12,11 @@
 // the types the extension understands, and requests only those — normally a
 // single selection transfer per capture.
 //
+// An owner that offers nothing we understand gets no request at all rather than
+// a walk of the types it did not offer; the one case that still falls back to a
+// blind walk is an owner that advertised nothing, which is the X11 quirk the
+// fallback exists for. See offeredTypeCandidates().
+//
 // Pure JS on purpose (no gi:// imports) so it can be unit-tested outside the
 // shell.
 
@@ -31,9 +36,12 @@ export const OFFERED_TYPE_GROUPS = [
 ];
 
 /**
- * Fallback probe for owners that advertise nothing: some X11 selection sources
- * answer a TARGETS request with an empty list, and those still need the blind
- * walk to be captured at all.
+ * Fallback probe for owners that advertise NOTHING: some X11 selection sources
+ * answer a TARGETS request with an empty list, and for those the blind walk is
+ * the only way to be captured at all.
+ *
+ * It is deliberately not used for an owner that advertised something we could
+ * not use — see offeredTypeCandidates().
  */
 export const BLIND_MIMETYPE_CHAIN = [
     'text/uri-list',
@@ -70,6 +78,20 @@ export function entryTypeForOffered(offeredType) {
  * capture will make. `request` is what gets asked of the clipboard,
  * `entryType` is what the resulting entry is stored as.
  *
+ * An empty list means "make no request at all", and that is a deliberate answer
+ * rather than a missing one. When the owner advertised types and none of them is
+ * one the extension understands, it has already told us what it holds: the walk
+ * of unoffered types cannot produce a better answer, and it is exactly the
+ * abandoned-transfer pattern that used to take the shell down under an X11 image
+ * burst. It also costs real time — an unanswered request waits out its full
+ * timeout, so the twelve of the chain were measured at about 2.4 seconds of
+ * silence before the capture gave up. Giving up at once leaves the same visible
+ * result (nothing captured) without the stall and without the risky requests.
+ *
+ * The blind chain is still the answer when the owner advertised nothing at all,
+ * which is the quirk it exists for. A `get_mimetypes()` that throws or answers
+ * non-array reaches that path too, because the caller passes an empty list.
+ *
  * @param {string[]} offered mimetypes as reported by the clipboard owner
  * @returns {{request: string, entryType: string}[]}
  */
@@ -88,10 +110,13 @@ export function offeredTypeCandidates(offered) {
             candidates.push({request: offeredType, entryType: entryTypeForOffered(offeredType)});
     }
 
-    if (candidates.length === 0)
-        return BLIND_MIMETYPE_CHAIN.map(type => ({request: type, entryType: entryTypeForOffered(type)}));
+    if (candidates.length > 0)
+        return candidates;
 
-    return candidates;
+    if (advertised.length > 0)
+        return [];
+
+    return BLIND_MIMETYPE_CHAIN.map(type => ({request: type, entryType: entryTypeForOffered(type)}));
 }
 
 // A rendering of the copied content as text: it can stand in for a file list or

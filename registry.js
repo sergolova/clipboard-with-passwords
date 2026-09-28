@@ -188,7 +188,19 @@ export class Registry {
             }
 
             const registry = JSON.parse(cacheTextData);
-            const entriesPromises = registry.map(jsonEntry => ClipboardEntry.fromJSON(jsonEntry));
+            // One unreadable record must cost that record and nothing else.
+            // fromJSON() is async and THROWS on a record it cannot make sense of
+            // (a mimetype outside text/* and image/* with no contents field
+            // reaches GIO with an undefined filename), and a single rejection
+            // inside Promise.all() rejects the whole load — which the catch below
+            // turns into an empty history. So each record is settled on its own
+            // and the bad ones are dropped, which is what the `!== null` filter
+            // was always meant to do.
+            const entriesPromises = registry.map(jsonEntry =>
+                ClipboardEntry.fromJSON(jsonEntry).catch(e => {
+                    logError('Clipboard Indicator: dropping an unreadable history record', e);
+                    return null;
+                }));
             let clipboardEntries = await Promise.all(entriesPromises);
             clipboardEntries = clipboardEntries.filter(entry => entry !== null);
 
@@ -410,14 +422,20 @@ export class ClipboardEntry {
     static async fromJSON (jsonEntry) {
         const mimetype = jsonEntry.mimetype || 'text/plain;charset=utf-8';
         const favorite = jsonEntry.favorite;
+        // Defaulted rather than passed through: a record whose mimetype is
+        // neither text/* nor image/* carries no contents at all, and handing
+        // `undefined` to GIO is an argument-type error, not a missing file. The
+        // empty name simply fails the usability check below, so such a record is
+        // dropped the same way a record pointing at a deleted payload is.
+        const contents = typeof jsonEntry.contents === 'string' ? jsonEntry.contents : '';
         let bytes = null;
         let storedFilename = null;
 
         if (ClipboardEntry.__isText(mimetype)) {
-            bytes = new TextEncoder().encode(jsonEntry.contents);
+            bytes = new TextEncoder().encode(contents);
         }
         else {
-            const filename = jsonEntry.contents;
+            const filename = contents;
             if (!ClipboardEntry.#payloadFileIsUsable(filename)) return null;
 
             // Lazy image restore (EGO-X-004): do not read the payload at
