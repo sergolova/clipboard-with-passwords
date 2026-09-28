@@ -12,6 +12,7 @@ import {
     SEVENZ_TIMEOUT_MS
 } from './constants.js';
 import { logWarn } from './logging.js';
+import { buildCategoryIndex, categoryCount } from './categoryIndex.js';
 import { cryptoRandomInt, setEntropySource } from './random.js';
 import { streamStdoutWithLimit } from './stdoutReader.js';
 import { fmt } from './strings.js';
@@ -253,6 +254,9 @@ export class PasswordVaultManager {
             version: 1,
             items: []
         };
+        // Categories and their counts, derived from this.data.items in one
+        // pass and dropped by every write path — see _categoryIndex().
+        this._categoryIndexCache = null;
         this.unlocked = false;
         this.recentService = null;
         // Operating container: what save() actually writes. Split from the
@@ -424,6 +428,7 @@ export class PasswordVaultManager {
         this.masterPassword = null;
         this.unlocked = false;
         this.data = { version: 1, items: [] };
+        this._invalidateCategoryIndex();
         this.recentService = null;
     }
 
@@ -441,6 +446,7 @@ export class PasswordVaultManager {
                 version: 1,
                 items: []
             };
+            this._invalidateCategoryIndex();
             // A freshly created vault uses the format selected in settings,
             // and save() aligns the archive name to it (storage.7z, not a
             // `.zip`-named 7z archive).
@@ -546,6 +552,7 @@ export class PasswordVaultManager {
             this.masterPassword = password;
             this.unlocked = true;
             this.data = normalized;
+            this._invalidateCategoryIndex();
             // Align the on-disk archive NAME with its content (rename to a
             // matching extension) without failing the unlock and without
             // asking the user anything — a rename cannot lose data, and the
@@ -1027,17 +1034,33 @@ export class PasswordVaultManager {
         });
     }
 
+    // Categories and per-category counts, in one pass over the records.
+    // Recomputed only after a write: a vault with 1000 records in 200
+    // categories used to answer each category separately, and the menu asks
+    // for a count per button on every refresh.
+    _categoryIndex() {
+        if (!this._categoryIndexCache)
+            this._categoryIndexCache = buildCategoryIndex(this.data.items || []);
+        return this._categoryIndexCache;
+    }
+
+    // Every path that puts records in or takes them out of this.data.items
+    // goes through here, so the index can never outlive the records it
+    // describes. Kept as a method rather than a bare assignment so that a new
+    // write path has exactly one place to call.
+    _invalidateCategoryIndex() {
+        this._categoryIndexCache = null;
+    }
+
     getCategories() {
         // Categories are derived dynamically from the items themselves,
-        // in order of first appearance (newest items first).
-        const seen = [];
-        (this.data.items || []).forEach(item => {
-            const cat = item.category;
-            if (cat && !seen.includes(cat)) {
-                seen.push(cat);
-            }
-        });
-        return seen;
+        // in order of first appearance (newest items first). A copy, so a
+        // caller that reorders the list cannot corrupt the index.
+        return [...this._categoryIndex().categories];
+    }
+
+    getCategoryCount(category) {
+        return categoryCount(this._categoryIndex(), category, ALL_CATEGORY);
     }
 
     getItems(query = '', category = '') {
@@ -1215,6 +1238,7 @@ export class PasswordVaultManager {
             item.id = this._generateId(ids);
         }
         this.data.items.unshift(item);
+        this._invalidateCategoryIndex();
         await this.save();
         return item;
     }
@@ -1231,6 +1255,7 @@ export class PasswordVaultManager {
             throw new Error(_('The vault archive contains invalid data.'));
         }
         this.data.items[index] = updated;
+        this._invalidateCategoryIndex();
 
         if (this.recentService && this.recentService.id === id) {
             this.recentService = { ...updated };
@@ -1242,6 +1267,7 @@ export class PasswordVaultManager {
 
     async deleteService(id) {
         this.data.items = this.data.items.filter(item => item.id !== id);
+        this._invalidateCategoryIndex();
         if (this.recentService && this.recentService.id === id) {
             this.recentService = null;
         }

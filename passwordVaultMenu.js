@@ -189,7 +189,7 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
     }
 
     _categoryCount(cat) {
-        return this.vaultManager.getItems('', cat).length;
+        return this.vaultManager.getCategoryCount(cat);
     }
 
     _buildUI() {
