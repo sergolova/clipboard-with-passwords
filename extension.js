@@ -136,6 +136,120 @@ function imageFormatLabel(mimetype) {
     return mimetype;
 }
 
+// Which settings need which work when they change.
+//
+// Every setting used to run the same handler, which re-read the whole schema,
+// re-labelled every menu row, re-laid out the topbar, and asked the clipboard
+// for its contents again. Most of that work belongs to a handful of settings:
+// a row's text depends on the preview length and the colourize switch, a row's
+// buttons on the five show-* switches, the topbar on its own three, and so on.
+// The clipboard read is the expensive part — it is a selection round-trip, up
+// to 200 ms per mimetype the owner will not hand over — and it produced the
+// worst consequence, because a string setting bound per keystroke (the vault
+// path entry writes on every keypress) started one whole capture chain per
+// character, none of them serialized against the coalescer in _refreshIndicator.
+//
+// A key in none of these lists still gets its own signal, because the reload
+// every handler starts with is what keeps the cached values in step with the
+// schema — that is what the rest of the code reads. What such a key has no
+// extra work is on screen: it is read at the moment it is used, so nothing
+// visible waits for the change to be applied. `changed` with a null key — the
+// schema itself moving, or a key appearing after an upgrade — is not covered by
+// any per-key signal and runs everything.
+const ITEM_APPEARANCE_KEYS = [
+    PrefsFields.PREVIEW_SIZE,          // row text length
+    PrefsFields.COLORIZE_CLIPBOARD,    // per-type row styling
+    PrefsFields.PASTE_BUTTON,
+    PrefsFields.SHOW_DELETE_BUTTON,
+    PrefsFields.SHOW_TAG_BUTTON,
+    PrefsFields.SHOW_PIN_BUTTON,
+    PrefsFields.SHOW_EDIT_BUTTON,
+    PrefsFields.SHOW_PREVIEW_BUTTON,
+];
+
+const MENU_LAYOUT_KEYS = [
+    PrefsFields.SHOW_SEARCH_BAR,
+    PrefsFields.SHOW_PRIVATE_MODE,
+    PrefsFields.PINNED_ON_BOTTOM,
+    PrefsFields.SHOW_SETTINGS_BUTTON,
+    PrefsFields.SHOW_CLEAR_HISTORY_BUTTON,
+];
+
+const TOPBAR_KEYS = [
+    PrefsFields.TOPBAR_DISPLAY_MODE_ID,
+    PrefsFields.TOPBAR_PREVIEW_SIZE,
+    PrefsFields.DISABLE_DOWN_ARROW,
+];
+
+// Shrinking the history has to drop rows right away, not at the next copy.
+const HISTORY_KEYS = [
+    PrefsFields.HISTORY_SIZE,
+];
+
+// Settings that change the entry itself, so the clipboard has to be read again
+// for the topbar to show what it would have shown before: whether an image may
+// be shown at all, and the two edge-trimming options, which are applied while
+// a payload becomes an entry.
+const CAPTURE_KEYS = [
+    PrefsFields.CACHE_IMAGES,
+    PrefsFields.STRIP_TEXT,
+    PrefsFields.STRIP_LINE_BREAKS,
+];
+
+const KEYBINDING_KEYS = [
+    PrefsFields.ENABLE_KEYBINDING,
+    PrefsFields.BINDING_TOGGLE_MENU,
+    PrefsFields.BINDING_CLEAR_HISTORY,
+    PrefsFields.BINDING_PREV_ENTRY,
+    PrefsFields.BINDING_NEXT_ENTRY,
+    PrefsFields.BINDING_PRIVATE_MODE,
+    PrefsFields.BINDING_TOGGLE_PASSWORD_VAULT,
+];
+
+const VAULT_FORMAT_KEYS = [
+    PrefsFields.VAULT_FORMAT_7Z,
+];
+
+const VAULT_ENABLED_KEYS = [
+    PrefsFields.VAULT_ENABLED,
+];
+
+// The settings groups, in the order the full handler used to do their work.
+const SETTINGS_GROUPS = [
+    ['items', ITEM_APPEARANCE_KEYS],
+    ['menu', MENU_LAYOUT_KEYS],
+    ['topbar', TOPBAR_KEYS],
+    ['capture', CAPTURE_KEYS],
+    ['history', HISTORY_KEYS],
+    ['keybindings', KEYBINDING_KEYS],
+    ['vault-format', VAULT_FORMAT_KEYS],
+    ['vault-enabled', VAULT_ENABLED_KEYS],
+];
+
+// The work each key is part of, as a lookup from the key itself, so connecting
+// one signal per key does not need the group threaded through it. A key that is
+// in here is a typo away from doing nothing at all, so the table is checked
+// against PrefsFields once, when the signals are connected: a key that is not a
+// real setting, or one that two groups both claim, is a load-time error rather
+// than a switch that quietly stops working.
+const SETTINGS_WORK = (() => {
+    const work = new Map();
+    for (const [group, keys] of SETTINGS_GROUPS) {
+        for (const key of keys) {
+            if (work.has(key))
+                throw new Error(`Clipboard Indicator: ${key} is claimed by two settings groups`);
+            work.set(key, group);
+        }
+    }
+
+    const known = new Set(Object.values(PrefsFields));
+    const unknown = [...work.keys()].filter(key => !known.has(key));
+    if (unknown.length)
+        throw new Error(`Clipboard Indicator: settings work for keys not in the schema: ${unknown.join(', ')}`);
+
+    return work;
+})();
+
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
         this.clipboardIndicator = new ClipboardIndicator({
@@ -172,6 +286,12 @@ const ClipboardIndicator = GObject.registerClass({
     // — see preferLastSuccessful(). Only ever a request the current owner
     // advertises, so it is picked out of the candidate list, never added to it.
     #lastSuccessfulRequest = null;
+    // The entry the topbar is currently showing, so a change to a topbar
+    // setting can re-lay it out without asking the clipboard again. Stays
+    // `undefined` until the topbar has been given something at all: that is
+    // the one case where the clipboard really does have to be read, because
+    // nothing captured it yet.
+    _indicatorEntry = undefined;
 
     destroy() {
         this._destroyed = true;
@@ -529,7 +649,15 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     #updateIndicatorContent(entry) {
-        if (this.preventIndicatorUpdate || (TOPBAR_DISPLAY_MODE !== 1 && TOPBAR_DISPLAY_MODE !== 2)) {
+        if (this.preventIndicatorUpdate)
+            return;
+
+        // Remembered even when the topbar is hidden or set to the icon-only
+        // mode: the entry is what the topbar will have to show the moment it
+        // becomes visible, and a topbar setting change re-renders from here.
+        this._indicatorEntry = entry;
+
+        if (TOPBAR_DISPLAY_MODE !== 1 && TOPBAR_DISPLAY_MODE !== 2) {
             return;
         }
 
@@ -2315,6 +2443,21 @@ const ClipboardIndicator = GObject.registerClass({
         this._settingsChangedId = this.extension.settings.connect('changed',
             this._onSettingsChange.bind(this));
 
+        // One signal per setting, not one blanket signal. Every key needs its
+        // handler, because every handler reloads the cached values the rest of
+        // the code reads; only some keys have work to do on top of that, and
+        // SETTINGS_WORK says which. Going through PrefsFields rather than the
+        // group tables means a setting nobody thought about is still connected
+        // — it just does the cheap thing. A schema key with no PrefsFields entry
+        // cannot be left out here either: nothing in the extension reads a
+        // setting by any other name.
+        this._settingsGroupIds = [];
+        for (const key of Object.values(PrefsFields)) {
+            this._settingsGroupIds.push(
+                this.extension.settings.connect(`changed::${key}`,
+                    this._onSettingsGroupChange.bind(this, SETTINGS_WORK.get(key) ?? null)));
+        }
+
         this._fetchSettings();
 
         if (ENABLE_KEYBINDING)
@@ -2407,33 +2550,138 @@ const ClipboardIndicator = GObject.registerClass({
         }
     }
 
-    async _onSettingsChange() {
+    // GSettings emits `changed` for every key change *and* `changed::<key>` for
+    // the same change, so this blanket signal is here for the one case no
+    // per-key signal covers: a null key, meaning the schema itself moved (a
+    // relocatable schema's path, or a key that appeared with an upgrade).
+    // Anything a user can change arrives through _onSettingsGroupChange.
+    _onSettingsChange(_settings, key) {
+        if (key !== null)
+            return;
+        this._applyAllSettings();
+    }
+
+    // One setting changed: reload the cached values, then do the work that
+    // this particular setting is actually part of. A null group means it is
+    // part of none — the reload above is the whole of the work.
+    async _onSettingsGroupChange(group) {
         try {
-            // Load the settings into variables
+            // Load the settings into variables. Every handler starts here, and
+            // it is the one cost they all share — the values are read from
+            // these mirrors everywhere else, so a setting that changes an
+            // on-screen thing always changes a mirror first.
             this._fetchSettings();
 
-            // Keep the vault manager's desired archive container in sync with
-            // the settings (7z vs ZIP). When the user switches the format
-            // while the vault is still open we already hold the master
-            // password, so the conversion can run right away — but only after
-            // the user confirms it (see _maybeConvertVault): the rewrite
-            // touches every byte and leaves the old-format file behind.
-            this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z, { userSet: VAULT_FORMAT_7Z_USER_SET });
-            if (this.vaultManager.isFormatConversionPending()) {
-                // Conversion is a destructive-ish rewrite (touches every byte)
-                // and leaves the old-format file behind — never run it without
-                // the user's confirmation. "Not now" postpones it to the next
-                // unlock; the format toggle itself is kept as selected.
-                this._maybeConvertVault();
+            switch (group) {
+            case 'items':
+                this._refreshItemAppearance();
+                break;
+            case 'menu':
+                // A hidden private-mode toggle has to turn private mode off,
+                // or the switch would be gone with private mode still on.
+                if (!SHOW_PRIVATE_MODE && PRIVATEMODE && this.privateModeMenuItem) {
+                    this.privateModeMenuItem.setToggleState(false);
+                    this._onPrivateModeSwitch();
+                }
+                this.#showElements();
+                break;
+            case 'topbar':
+                this._updateTopbarLayout();
+                await this.#refreshTopbarContent();
+                break;
+            case 'capture':
+                // These change the entry itself, so the topbar can only be
+                // brought up to date by reading the clipboard again.
+                this.#updateIndicatorContent(await this.#getClipboardContent());
+                break;
+            case 'history':
+                // Remove old entries in case the registry size shrank, and
+                // re-check the menu: rows can disappear entirely.
+                this._removeOldestEntries();
+                this.#showElements();
+                break;
+            case 'keybindings':
+                if (ENABLE_KEYBINDING)
+                    this._bindShortcuts();
+                else
+                    this._unbindShortcuts();
+                break;
+            case 'vault-format':
+                this._syncVaultArchiveFormat();
+                break;
+            case 'vault-enabled':
+                // If the vault got disabled while it was open, drop back to
+                // the regular clipboard list.
+                if (!VAULT_ENABLED && this.isVaultMode)
+                    this._showHistoryMenu();
+                break;
             }
+        } catch (e) {
+            logError('Clipboard Indicator: Failed to apply a settings change');
+            logError(e);
+        }
+    }
 
-            // If the vault got disabled while it was open, drop back to the
-            // regular clipboard list.
+    // Keep the vault manager's desired archive container in sync with the
+    // settings (7z vs ZIP). When the user switches the format while the vault
+    // is still open we already hold the master password, so the conversion can
+    // run right away — but only after the user confirms it (see
+    // _maybeConvertVault): the rewrite touches every byte and leaves the
+    // old-format file behind.
+    _syncVaultArchiveFormat() {
+        this.vaultManager.setArchiveFormat(VAULT_FORMAT_7Z, { userSet: VAULT_FORMAT_7Z_USER_SET });
+        if (this.vaultManager.isFormatConversionPending()) {
+            // Conversion is a destructive-ish rewrite (touches every byte)
+            // and leaves the old-format file behind — never run it without
+            // the user's confirmation. "Not now" postpones it to the next
+            // unlock; the format toggle itself is kept as selected.
+            this._maybeConvertVault();
+        }
+    }
+
+    // Re-apply everything about how a menu row looks: its text length, its
+    // type styling, and which of its action buttons are shown.
+    _refreshItemAppearance() {
+        for (const mItem of this._getAllIMenuItems()) {
+            this._setEntryLabel(mItem);
+            this._updateTypeStyle(mItem);
+            mItem.pasteBtn.visible = PASTE_BUTTON;
+            mItem.icoBtn.visible = SHOW_DELETE_BUTTON;
+            mItem.tagBtn.visible = SHOW_TAG_BUTTON;
+            mItem.icofavBtn.visible = SHOW_PIN_BUTTON;
+            if (mItem.editBtn) mItem.editBtn.visible = SHOW_EDIT_BUTTON;
+            if (mItem.imagePreviewBtn) mItem.imagePreviewBtn.visible = SHOW_PREVIEW_BUTTON;
+        }
+    }
+
+    // Re-render the topbar from the entry it is already showing. Every
+    // clipboard change re-renders it through the capture path, so asking the
+    // clipboard again would spend a selection round-trip per settings change
+    // to be told what is already on screen. The one case with nothing to reuse
+    // is a topbar that has never been given an entry — nothing has captured
+    // since startup — and then the clipboard is the only place the answer is.
+    async #refreshTopbarContent() {
+        if (this._indicatorEntry === undefined) {
+            this.#updateIndicatorContent(await this.#getClipboardContent());
+            return;
+        }
+        this.#updateIndicatorContent(this._indicatorEntry);
+    }
+
+    // Every settings change at once: the schema moved under us, so nothing
+    // about which settings exist, or which of them this run already handled, can
+    // be trusted. This is what the change used to do for every key, kept for
+    // the one case no per-key signal covers.
+    async _applyAllSettings() {
+        try {
+            this._fetchSettings();
+
+            this._syncVaultArchiveFormat();
+
             if (!VAULT_ENABLED && this.isVaultMode) {
                 this._showHistoryMenu();
             }
 
-            // If the toggle is hidden but private mode is on, force it off now
             if (!SHOW_PRIVATE_MODE && PRIVATEMODE && this.privateModeMenuItem) {
                 this.privateModeMenuItem.setToggleState(false);
                 this._onPrivateModeSwitch();
@@ -2442,17 +2690,7 @@ const ClipboardIndicator = GObject.registerClass({
             // Remove old entries in case the registry size changed
             this._removeOldestEntries();
 
-            // Re-set menu-items lables in case preview size changed
-            this._getAllIMenuItems().forEach(mItem => {
-                this._setEntryLabel(mItem);
-                this._updateTypeStyle(mItem);
-                mItem.pasteBtn.visible = PASTE_BUTTON;
-                mItem.icoBtn.visible = SHOW_DELETE_BUTTON;
-                mItem.tagBtn.visible = SHOW_TAG_BUTTON;
-                mItem.icofavBtn.visible = SHOW_PIN_BUTTON;
-                if (mItem.editBtn) mItem.editBtn.visible = SHOW_EDIT_BUTTON;
-                if (mItem.imagePreviewBtn) mItem.imagePreviewBtn.visible = SHOW_PREVIEW_BUTTON;
-            });
+            this._refreshItemAppearance();
 
             //update topbar
             this._updateTopbarLayout();
@@ -2764,6 +3002,12 @@ const ClipboardIndicator = GObject.registerClass({
 
         this.extension.settings.disconnect(this._settingsChangedId);
         this._settingsChangedId = null;
+
+        if (this._settingsGroupIds) {
+            for (const id of this._settingsGroupIds)
+                this.extension.settings.disconnect(id);
+            this._settingsGroupIds = null;
+        }
 
         if (this._intervalSettingChangedId) {
             this.extension.settings.disconnect(this._intervalSettingChangedId);
