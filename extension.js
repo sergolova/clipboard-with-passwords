@@ -2788,7 +2788,10 @@ const ClipboardIndicator = GObject.registerClass({
                 },
                 isFreshVault
                     ? _('Use a long, unique passphrase — the vault password cannot be recovered.')
-                    : null
+                    : null,
+                isFreshVault
+                    ? _('Create')
+                    : _('Unlock'),
             );
             dialog.connect('closed', () => {
                 if (this._destroyed) {

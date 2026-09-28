@@ -8,6 +8,7 @@ import {gettext as _, ngettext} from 'resource:///org/gnome/shell/extensions/ext
 import { generatePassword } from './passwordVault.js';
 import { themeColors } from './theme.js';
 import { logWarn } from './logging.js';
+import Pango from 'gi://Pango';
 
 // Soft floor for the live passphrase hint shown when a NEW vault is created
 // (its master password is chosen inside this dialog for the first time).
@@ -53,7 +54,7 @@ function createPasteButton(entry) {
 export const MasterPasswordDialog = GObject.registerClass(
     {GTypeName: 'ClipboardWithPasswordsMasterPasswordDialog'},
     class MasterPasswordDialog extends ModalDialog.ModalDialog {
-        _init(title, message, callback, guidance = null) {
+        _init(title, message, callback, guidance = null, confirmBtnCaption = null) {
             super._init({ destroyOnClose: true });
 
             let mainBox = new St.BoxLayout({
@@ -93,6 +94,12 @@ export const MasterPasswordDialog = GObject.registerClass(
                 x_align: Clutter.ActorAlign.CENTER,
                 text: ''
             });
+
+            const clutterErrorText = this.errorLabel.get_clutter_text();
+            clutterErrorText.line_wrap = true;
+            clutterErrorText.ellipsize = Pango.EllipsizeMode.NONE;
+            clutterErrorText.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            
             mainBox.add_child(this.errorLabel);
 
             // When this dialog CREATES the vault (fresh archive — first run or the file
@@ -106,6 +113,12 @@ export const MasterPasswordDialog = GObject.registerClass(
                     x_align: Clutter.ActorAlign.CENTER,
                     text: guidance
                 });
+
+                const clutterText = this.guidanceLabel.get_clutter_text();
+                clutterText.line_wrap = true;
+                clutterText.ellipsize = Pango.EllipsizeMode.NONE;
+                clutterText.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+
                 mainBox.add_child(this.guidanceLabel);
                 this.entry.clutter_text.connect('text-changed', () => {
                     this._updateGuidance(guidance);
@@ -127,7 +140,7 @@ export const MasterPasswordDialog = GObject.registerClass(
                     key: Clutter.KEY_Escape
                 },
                 {
-                    label: _('Unlock'),
+                    label: confirmBtnCaption || _('Unlock'),
                     action: () => {
                         this._submit(callback);
                     },
@@ -440,7 +453,7 @@ export const ServiceEditDialog = GObject.registerClass(
             }
 
             buttons.push({
-                label: _('Save'),
+                label: serviceItem ? _('Save') : _('Create'),
                 action: () => {
                     const data = {
                         name: this.nameEntry.get_text() || _('Untitled'),
