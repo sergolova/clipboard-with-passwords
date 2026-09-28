@@ -2792,6 +2792,11 @@ const ClipboardIndicator = GObject.registerClass({
                 isFreshVault
                     ? _('Create')
                     : _('Unlock'),
+                // Creation only: the passphrase is being picked now, and a typo
+                // in it can never be recovered from, so it is typed twice. An
+                // unlock has nothing to confirm — the stored archive is the
+                // check, and a wrong password is simply refused.
+                isFreshVault,
             );
             dialog.connect('closed', () => {
                 if (this._destroyed) {

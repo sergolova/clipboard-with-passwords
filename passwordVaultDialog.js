@@ -54,7 +54,14 @@ function createPasteButton(entry) {
 export const MasterPasswordDialog = GObject.registerClass(
     {GTypeName: 'ClipboardWithPasswordsMasterPasswordDialog'},
     class MasterPasswordDialog extends ModalDialog.ModalDialog {
-        _init(title, message, callback, guidance = null, confirmBtnCaption = null) {
+        // `requireConfirmation` adds a second field the master password has to
+        // be typed into twice. It is only ever true for the CREATION dialog:
+        // there the passphrase is being chosen for the first time, it cannot be
+        // recovered, and there is no second chance to notice a typo — an
+        // unlock only checks an existing password, so there is nothing to
+        // confirm there.
+        _init(title, message, callback, guidance = null, confirmBtnCaption = null,
+            requireConfirmation = false) {
             super._init({ destroyOnClose: true });
 
             let mainBox = new St.BoxLayout({
@@ -88,6 +95,53 @@ export const MasterPasswordDialog = GObject.registerClass(
             pwdEntryBox.add_child(this.entry);
             pwdEntryBox.add_child(createPasteButton(this.entry));
             mainBox.add_child(pwdEntryBox);
+
+            // Typo guard for the creation dialog only (see the note on
+            // _init): a master password that is wrong in a way the user cannot
+            // see means the vault is unreadable forever, because nothing else
+            // can verify it. A second identical field turns "pressed the wrong
+            // key" into an error the dialog can point at.
+            if (requireConfirmation) {
+                this.confirmEntry = new St.PasswordEntry({
+                    hint_text: _('Repeat the master password'),
+                    can_focus: true,
+                    style: 'padding: 8px; font-size: 14px;'
+                });
+                this.confirmEntry.set_x_expand(true);
+
+                let confirmBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
+                confirmBox.add_child(this.confirmEntry);
+                confirmBox.add_child(createPasteButton(this.confirmEntry));
+                mainBox.add_child(confirmBox);
+
+                // Enter in either field submits, so the user never has to
+                // reach for the mouse to confirm a second time.
+                this.confirmEntry.clutter_text.connect('activate', () => {
+                    this._submit(callback);
+                });
+
+                // A second field makes this the "several entries in one
+                // dialog" case: with the creation dialog now holding two
+                // password fields, the unfocused one would trip the
+                // clutter_input_focus_is_focused criticals on its first
+                // allocation if it were editable (an editable ClutterText
+                // pushes cursor updates that assert the input focus is
+                // attached). So it starts non-editable and only becomes
+                // editable on the first real interaction, when the input method
+                // is already attached. The first field keeps its editable
+                // state: it is the dialog's initial key focus, so its input
+                // focus is attached before its first allocation.
+                this._deferEditableUntilTouched(this.confirmEntry);
+
+                // Once a mismatch has been reported, correct it the moment the
+                // two fields agree again instead of waiting for another submit.
+                const recheck = () => {
+                    if (this._reportedMismatch && this._passwordsMatch())
+                        this.setError('');
+                };
+                this.entry.clutter_text.connect('text-changed', recheck);
+                this.confirmEntry.clutter_text.connect('text-changed', recheck);
+            }
 
             this.errorLabel = new St.Label({
                 style: `color: ${themeColors().error}; font-size: 12px;`,
@@ -154,6 +208,42 @@ export const MasterPasswordDialog = GObject.registerClass(
             this.errorLabel.set_text(text || '');
         }
 
+        // Leave `entry` non-editable until the user actually reaches for it,
+        // then make it editable and give it the key focus in the same
+        // interaction. Handlers go on BOTH the St.Entry widget and its
+        // ClutterText: a non-editable text is skipped by pointer picking, so
+        // the click lands on the widget and a handler on the text alone would
+        // never fire; once the text is editable the same click reaches it too,
+        // which is a harmless duplicate. Key events need the widget handler as
+        // well, because the key focus sits on the widget until the first click.
+        _deferEditableUntilTouched(entry) {
+            const ct = entry.clutter_text;
+            ct.editable = false;
+            const takeFocus = () => {
+                ct.editable = true;
+                global.stage.set_key_focus(ct);
+            };
+            entry.connect('button-press-event', takeFocus);
+            ct.connect('button-press-event', takeFocus);
+            entry.connect('key-press-event', event => {
+                // A keypress means the user is typing here. Tab additionally
+                // moves to the other password field, so the confirmation can be
+                // reached without a mouse.
+                ct.editable = true;
+                const symbol = event.get_key_symbol();
+                if (symbol === Clutter.KEY_Tab || symbol === Clutter.KEY_ISO_Left_Tab) {
+                    const isShift = event.get_state() & Clutter.ModifierType.SHIFT_MASK;
+                    const other = isShift ? this.entry : this.confirmEntry;
+                    if (other && other.clutter_text) {
+                        other.clutter_text.editable = true;
+                        global.stage.set_key_focus(other.clutter_text);
+                        return Clutter.EVENT_STOP;
+                    }
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
+
         // Soft passphrase guidance while a NEW vault's master password is
         // being typed. Empty field → the static creation guidance; very
         // short input → a gentle "longer is harder to guess" hint; adequate
@@ -175,10 +265,28 @@ export const MasterPasswordDialog = GObject.registerClass(
             }
         }
 
+        // The two fields agree, or there is nothing to compare: exact string
+        // equality, not a length or a trimmed comparison — the master password
+        // is never trimmed either, so "  a" and "a" are genuinely different
+        // passwords and must not be treated as a match.
+        _passwordsMatch() {
+            if (!this.confirmEntry) {
+                return true;
+            }
+            return this.entry.get_text() === this.confirmEntry.get_text();
+        }
+
         async _submit(callback) {
             const pwd = this.entry.get_text();
             if (!pwd) {
                 this.setError(_('Password cannot be empty'));
+                return;
+            }
+            // Checked before anything is written: the confirmation exists to
+            // catch the typo, and unlocking first would defeat that.
+            if (!this._passwordsMatch()) {
+                this._reportedMismatch = true;
+                this.setError(_('The two passwords do not match.'));
                 return;
             }
             this.setError(_('Unlocking…'));
