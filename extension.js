@@ -2201,7 +2201,13 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _updateIntervalTimer() {
-        this._fetchSettings();
+        // Only time-dependent state is refreshed here. The two values this
+        // reads are already in memory: the settings handler reloads them on
+        // every change, and _scheduleNextHistoryClear() assigns the new
+        // NEXT_HISTORY_CLEAR before it arms this timer. Reloading here would
+        // only re-read every setting in the schema once per second, on the
+        // main loop, to pick up two values that cannot have changed
+        // underneath us.
         this.resetTimerButton.visible = CLEAR_HISTORY_ON_INTERVAL;
         this.timerLabel.visible = CLEAR_HISTORY_ON_INTERVAL;
         if (!CLEAR_HISTORY_ON_INTERVAL) return;
