@@ -1252,8 +1252,14 @@ const ClipboardIndicator = GObject.registerClass({
                 y_align: Clutter.ActorAlign.CENTER
             });
 
+            // The swatch is this row's first thing after the type icon, so it
+            // belongs exactly where a row that shows only text puts its text —
+            // hence no margin on its left. The margin is only on the right, to
+            // keep the value from touching the swatch: a gap on the left would
+            // shift the swatch, and the text behind it, away from every other
+            // row, for a gap with nothing on the other side of it.
             const swatch = new St.Widget({
-                style: `background-color: ${cssColor}; width: 36px; height: 18px; border: 1px solid ${themeColors().swatchBorder}; border-radius: 2px; margin: 0 8px;`,
+                style: `background-color: ${cssColor}; width: 36px; height: 18px; border: 1px solid ${themeColors().swatchBorder}; border-radius: 2px; margin-right: 8px;`,
                 y_align: Clutter.ActorAlign.CENTER
             });
             box.add_child(swatch);
