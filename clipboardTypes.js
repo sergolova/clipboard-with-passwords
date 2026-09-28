@@ -93,3 +93,66 @@ export function offeredTypeCandidates(offered) {
 
     return candidates;
 }
+
+// A rendering of the copied content as text: it can stand in for a file list or
+// for an image only by losing what those carried.
+const TEXT_RENDERINGS = new Set(['text/plain', 'text/plain;charset=utf-8', 'text/html']);
+
+/**
+ * Moves the request that last produced a capture to the front of `candidates`.
+ *
+ * A capture walks the candidates in order and stops at the first one the owner
+ * answers, and an unanswered request costs up to the full 200 ms timeout — so
+ * every candidate in front of the right one is paid for in latency. The type
+ * that just worked is the best available guess at the right one for the next
+ * capture too: it is reached in one transfer instead of one per skipped
+ * candidate. Any other candidate is pushed at most one position further back,
+ * so the cost of guessing wrong is a single failed request, never a whole
+ * re-walk.
+ *
+ * A promotion is refused only when it would change *what* gets stored rather
+ * than only when it arrives, and the only rendering that loses anything is a
+ * text one: a GTK application answers a file copy with the URI list as plain
+ * text too, and answers an image with its path or a data URI. So a text
+ * rendering is never moved in front of `text/uri-list` or of an image type —
+ * otherwise a file list or a picture copied right after a text copy would land
+ * as text.
+ *
+ * Everything else is a pure latency win, and the case that matters in practice
+ * is an image type moving in front of plain text: an image viewer that offers
+ * both otherwise pays a failed text request, and its full timeout, on every
+ * copy. An image type may also pass `text/uri-list`, because an owner that
+ * answers with image data has an image even if the last thing copied was text.
+ *
+ * @param {{request: string, entryType: string}[]} candidates as produced by
+ *   offeredTypeCandidates()
+ * @param {?string} lastSuccessful the `request` of the last successful capture
+ * @returns {{request: string, entryType: string}[]} a new list, or `candidates`
+ *   itself when there is nothing to move
+ */
+export function preferLastSuccessful(candidates, lastSuccessful) {
+    if (!lastSuccessful || !Array.isArray(candidates))
+        return candidates;
+
+    const index = candidates.findIndex(c => c.request === lastSuccessful);
+    if (index <= 0)
+        return candidates;
+
+    const preferred = candidates[index];
+    const isText = TEXT_RENDERINGS.has(preferred.entryType);
+    if (!isText)
+        return moveToFront(candidates, index);
+    if (candidates.slice(0, index).some(c =>
+            c.entryType === 'text/uri-list' || c.entryType.startsWith('image/')))
+        return candidates;
+
+    return moveToFront(candidates, index);
+}
+
+function moveToFront(candidates, index) {
+    return [
+        candidates[index],
+        ...candidates.slice(0, index),
+        ...candidates.slice(index + 1),
+    ];
+}

@@ -18,7 +18,7 @@ import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
-import {offeredTypeCandidates} from './clipboardTypes.js';
+import {offeredTypeCandidates, preferLastSuccessful} from './clipboardTypes.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
@@ -168,9 +168,14 @@ const ClipboardIndicator = GObject.registerClass({
     #captureScheduled = false;
     #captureQueued = false;
     _captureSettleTimeoutId = null;
+    // The request that last produced a capture, retried first on the next one
+    // — see preferLastSuccessful(). Only ever a request the current owner
+    // advertises, so it is picked out of the candidate list, never added to it.
+    #lastSuccessfulRequest = null;
 
     destroy() {
         this._destroyed = true;
+        this.#lastSuccessfulRequest = null;
         if (this._captureSettleTimeoutId) {
             clearTimeout(this._captureSettleTimeoutId);
             this._captureSettleTimeoutId = null;
@@ -3079,7 +3084,9 @@ const ClipboardIndicator = GObject.registerClass({
     async #getClipboardContent() {
         if (this._destroyed) return null;
 
-        for (const {request, entryType} of this.#offeredTypeCandidates()) {
+        const candidates = preferLastSuccessful(this.#offeredTypeCandidates(), this.#lastSuccessfulRequest);
+
+        for (const {request, entryType} of candidates) {
             if (this._destroyed) return null;
 
             const result = await this.#readClipboardType(request, entryType);
@@ -3089,6 +3096,7 @@ const ClipboardIndicator = GObject.registerClass({
             if (!CACHE_IMAGES && result.isImage())
                 return null;
 
+            this.#lastSuccessfulRequest = request;
             return result;
         }
 
