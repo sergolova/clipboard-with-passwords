@@ -10,6 +10,14 @@ import { themeColors } from './theme.js';
 import { logWarn } from './logging.js';
 import Pango from 'gi://Pango';
 
+// Usable width of the service dialog's content box, in pixels. The scroll view
+// is 470px wide and the content box adds 12px of padding on each side, so this
+// is what a row inside the form actually has to share. It is named rather than
+// written into the CSS twice because the category buttons wrap by it: two
+// copies of this number, free to drift apart, is how a wrap ends up believing
+// it has more or less room than it does.
+const DIALOG_CONTENT_WIDTH = 446;
+
 // Soft floor for the live passphrase hint shown when a NEW vault is created
 // (its master password is chosen inside this dialog for the first time).
 // Deliberately a guideline, not a hard "weak/strong" verdict: the hint only
@@ -360,7 +368,7 @@ export const ServiceEditDialog = GObject.registerClass(
 
             let mainBox = new St.BoxLayout({
                 vertical: true,
-                style: 'spacing: 10px; padding: 12px; width: 446px;'
+                style: `spacing: 10px; padding: 12px; width: ${DIALOG_CONTENT_WIDTH}px;`
             });
             scrollView.set_child(mainBox);
 
@@ -376,15 +384,34 @@ export const ServiceEditDialog = GObject.registerClass(
             const initialCategory = serviceItem ? (serviceItem.category || '') : ((existingCategories && existingCategories[0]) || '');
 
             if (existingCategories && existingCategories.length > 0) {
-                let catBtnsContainer = new St.BoxLayout({ vertical: true, style: 'spacing: 4px; margin-bottom: 4px;' });
-                let currentRowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 4px;' });
-                catBtnsContainer.add_child(currentRowBox);
+                // The category buttons are wrapped by hand, one row box at a
+                // time, because St has no flow layout. What decides where a
+                // row breaks has to be two real numbers, or the block looks
+                // wrong in ways that are hard to describe:
+                //   * how wide a button actually IS — asking the actor, because
+                //     the old estimate (8px per character) was wrong for short
+                //     names, for non-Latin ones and for any other font;
+                //   * how much width the block actually HAS — the content box's
+                //     own width, named once, so it cannot drift from the CSS the
+                //     way the old hardcoded 430 did against a 446px box.
+                const catBtnSpacing = 4;
+                const catRow = () => new St.BoxLayout({
+                    vertical: false,
+                    style: `spacing: ${catBtnSpacing}px;`
+                });
 
-                let currentWidth = 0;
+                const catBtnsContainer = new St.BoxLayout({
+                    vertical: true,
+                    style: `spacing: ${catBtnSpacing}px; margin-bottom: 4px;`
+                });
                 const c = themeColors();
-                existingCategories.forEach(cat => {
+
+                // Build every button first, in order. The record is what
+                // _updateEditCategoryButtonsUI() works from, so it is filled in
+                // the same order the buttons are shown in.
+                for (const cat of existingCategories) {
                     const isSelected = cat === initialCategory;
-                    let catBtn = new St.Button({
+                    const catBtn = new St.Button({
                         label: cat,
                         style_class: 'button',
                         can_focus: false,
@@ -398,16 +425,45 @@ export const ServiceEditDialog = GObject.registerClass(
                         this.categoryEntry.set_text(cat);
                         this._updateEditCategoryButtonsUI(cat);
                     });
+                }
 
-                    if (cat.length * 8 + 20 > (430 - currentWidth)) {
-                        currentRowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 4px;' });
-                        catBtnsContainer.add_child(currentRowBox);
-                        currentWidth = 0;
-                    }
-                    currentRowBox.add_child(catBtn);
-                    currentWidth += cat.length * 8 + 24;
-                });
+                // Start with every button in one row. That is not the final
+                // layout — it is what makes them real: a button's width measured
+                // before its first allocation is a few pixels short of what the
+                // row actually needs, because the label's font metrics only
+                // settle once it has been laid out. Allocating them all in one
+                // row first, and wrapping afterwards, is what makes the
+                // measurement true; the alternative is a block that overflows by
+                // a handful of pixels for reasons nobody can see.
+                const firstRow = catRow();
+                for (const {btn} of this.editCategoryButtons)
+                    firstRow.add_child(btn);
+                catBtnsContainer.add_child(firstRow);
                 mainBox.add_child(catBtnsContainer);
+
+                // Wrap once, on the container's first allocation, and then leave
+                // it alone: the widths do not change after that, and a wrap that
+                // re-ran on every resize would only make the block jump around
+                // for no reason.
+                //
+                // The re-parenting itself waits for an idle: `notify::width`
+                // arrives in the middle of Clutter's allocation cycle, and
+                // adding and removing children from inside it makes Clutter
+                // warn that the actor "needs an allocation" while it is already
+                // on stage. By the next idle the buttons have been allocated
+                // once, which is what the measurement needs anyway.
+                let wrapScheduled = false;
+                const id = catBtnsContainer.connect('notify::width', () => {
+                    if (wrapScheduled)
+                        return false;
+                    wrapScheduled = true;
+                    catBtnsContainer.disconnect(id);
+                    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                        this._wrapCategoryButtons(catBtnsContainer, catBtnSpacing, firstRow);
+                        return GLib.SOURCE_REMOVE;
+                    });
+                    return false;
+                });
             }
 
             let box = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
@@ -653,6 +709,45 @@ export const ServiceEditDialog = GObject.registerClass(
             // DIAGNOSTIC (verification only, dropped at commit time): proves the
             // deferred-editable code is actually running in this shell session.
             // log(`[clipboard-with-passwords] service edit dialog: defer-editable armed (${(this._deferEditableEntries || []).length} entries)`);
+        }
+
+        // Lay the category buttons out into rows that each fit the content box.
+        // Called once, from an idle after the block's first allocation, so that
+        // every button reports a settled width: measured before its first
+        // allocation a button is a few pixels narrower than the row really
+        // needs, which is just enough to push a row past the edge.
+        //
+        // `firstRow` is the row the buttons are already in, and it is reused as
+        // the first row of the result rather than thrown away, so the block
+        // never ends up with an empty row above the real content.
+        _wrapCategoryButtons(container, spacing, firstRow) {
+            const catRow = () => new St.BoxLayout({
+                vertical: false,
+                style: `spacing: ${spacing}px;`
+            });
+
+            let row = firstRow;
+            let rowWidth = 0;
+            for (const {btn} of this.editCategoryButtons) {
+                // get_preferred_width() answers [minimum, natural]: the minimum
+                // is how far the button could shrink, which is far less than it
+                // will ever occupy, so the natural one is the number to wrap on.
+                const [, natural] = btn.get_preferred_width(-1);
+                const withSpacing = rowWidth === 0
+                    ? natural
+                    : rowWidth + spacing + natural;
+                if (withSpacing > DIALOG_CONTENT_WIDTH && rowWidth > 0) {
+                    row = catRow();
+                    container.add_child(row);
+                    rowWidth = natural;
+                } else {
+                    rowWidth = withSpacing;
+                }
+                if (btn.get_parent() !== row) {
+                    btn.get_parent()?.remove_child(btn);
+                    row.add_child(btn);
+                }
+            }
         }
 
         // Registers an entry whose editable state should be left disabled until
