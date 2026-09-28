@@ -317,8 +317,31 @@ export const ServiceEditDialog = GObject.registerClass(
             this.focusTargetWidget = null;
             this.editCategoryButtons = [];
 
+            // This scroll view is the dialog's only height clamp, and a
+            // scrollbar that can scroll a couple of pixels is worse than no
+            // scrollbar at all: add one extra field, the content ends up a few
+            // pixels taller than the clamp, and the bar appears, moves the
+            // content by an amount nobody can use, and stays there. The clamp
+            // is therefore taken from the monitor rather than being a fixed
+            // number — the dialog gets all the height the screen can really
+            // give it, and a scrollbar appears only for a service with enough
+            // fields to be taller than the screen.
+            //
+            // The reserve is what the dialog spends around the content, taken
+            // from the shell theme: 32px of content-box margin above and below
+            // (64), 32px of spacing between the content and the button bar, the
+            // button bar itself (~40), and slack so the buttons never sit on
+            // the screen edge.
+            const DIALOG_CHROME_RESERVE = 240;
+            // Past this the dialog stops being a dialog, so a tall monitor
+            // does not turn a long list of fields into a full-screen panel.
+            const DIALOG_MAX_CONTENT = 900;
+            const monitorHeight = Main.layoutManager.primaryMonitor?.height ?? 1080;
+            const maxContentHeight = Math.max(360,
+                Math.min(DIALOG_MAX_CONTENT, monitorHeight - DIALOG_CHROME_RESERVE));
+
             let scrollView = new St.ScrollView({
-                style: 'max-height: 600px; width: 470px;',
+                style: `max-height: ${maxContentHeight}px; width: 470px;`,
                 hscrollbar_policy: St.PolicyType.NEVER,
                 vscrollbar_policy: St.PolicyType.AUTOMATIC,
                 overlay_scrollbars: true,
