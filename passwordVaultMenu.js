@@ -19,7 +19,7 @@ import { planCardUpdate } from './cardReconciler.js';
 const INVISIBLE_EDGE_RE = /^[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]|[\s\u0000-\u001F\u007F-\u009F\u200B\u200C\u200D\uFEFF]$/;
 
 export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
-    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null, dialogTracker = null) {
+    constructor(vaultManager, copyToClipboardCallback, refreshCallback, closeMenuCallback, extensionSettings = null, dialogTracker = null, lockVaultCallback = null) {
         super();
 
         this.vaultManager = vaultManager;
@@ -28,6 +28,11 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this.closeMenuCallback = closeMenuCallback; // fn() to close popup menu
         this.settings = extensionSettings;
         this.dialogTracker = dialogTracker; // fn(dialog) -> register an open vault dialog
+        // fn() -> lock the vault now, at the user's request. The section does
+        // not lock anything itself: the master password, the "is it unlocked"
+        // answer and the policy about when a lock happens all belong to the
+        // indicator, so the button asks and lets it decide.
+        this.lockVaultCallback = lockVaultCallback;
 
         this.currentQuery = '';
         this.selectedCategory = ALL_CATEGORY;
@@ -285,6 +290,27 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             this._openEditDialog(null);
         });
         topBar.add_child(addBtn);
+
+        // Lock now, next to Add: the two are the two things a user reaches for
+        // when they are done with the vault — finishing it, or walking away
+        // from it. A lock icon rather than a word keeps the bar from growing,
+        // and the accessible name carries the wording for anything that reads
+        // it out.
+        this.lockBtn = new St.Button({
+            style_class: 'button',
+            style: 'padding: 4px 8px;',
+            accessible_name: _('Lock the password vault'),
+            child: new St.Icon({icon_name: 'system-lock-screen-symbolic', icon_size: 12})
+        });
+        this.lockBtn.connect('clicked', () => {
+            // Closing the menu first is the indicator's business, not ours: it
+            // is what keeps the lock in step with the menu, the reveal state and
+            // the "is the vault open" flag. If there is nothing to call (a
+            // section built without a lock handler), the button is inert rather
+            // than throwing on click.
+            this.lockVaultCallback?.();
+        });
+        topBar.add_child(this.lockBtn);
 
         container.add_child(topBar);
 

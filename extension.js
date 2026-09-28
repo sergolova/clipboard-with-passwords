@@ -941,7 +941,12 @@ const ClipboardIndicator = GObject.registerClass({
                 },
                 closeMenuCallback,
                 this.extension.settings,
-                (dialog) => this._registerVaultDialog(dialog)
+                (dialog) => this._registerVaultDialog(dialog),
+                // The vault's own "Lock" button. Routing it through the same
+                // method the auto-lock uses keeps one definition of what
+                // locking involves: the menu closes, the secrets are dropped
+                // and the master password is asked again next time.
+                () => this._autoLockVault('manual')
             );
             this.menu.addMenuItem(this.passwordVaultMenuSection);
         }
@@ -2913,8 +2918,12 @@ const ClipboardIndicator = GObject.registerClass({
         }
         // In "after-sleep" mode a plain screen lock (Super+L / wallpaper) is
         // not enough to require the master password again — only an actual
-        // suspend (sleep) re-locks the vault. Other modes lock on both.
-        if (VAULT_PASSWORD_REQUEST === 'after-sleep' && cause !== 'sleep') {
+        // suspend (sleep) re-locks the vault. Other modes lock on both. A lock
+        // the user asked for is none of the policy's business: it is an
+        // explicit request to be done with the vault now, and it locks in every
+        // mode.
+        const manual = cause === 'manual';
+        if (VAULT_PASSWORD_REQUEST === 'after-sleep' && cause !== 'sleep' && !manual) {
             return;
         }
         if (this.menu && this.menu.isOpen) {
@@ -2922,6 +2931,15 @@ const ClipboardIndicator = GObject.registerClass({
         }
         this.vaultManager.lock();
         this._unlockedVaultPath = null;
+        if (manual) {
+            // Leave the vault view as well as closing the menu. Closing alone is
+            // not enough: the menu shortcut does not go through
+            // openPasswordVault(), so it would reopen straight into the vault
+            // section — an empty list with an "Add service" button, on a vault
+            // the user just locked. Being back on the clipboard history is also
+            // the state that reads as "done" rather than "broken".
+            this._showHistoryMenu();
+        }
         if (!this._destroyed) {
             Main.notify(_('Password Vault'), _('The password vault has been locked.'));
         }
