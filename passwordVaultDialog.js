@@ -636,7 +636,7 @@ export const ServiceEditDialog = GObject.registerClass(
         _addExtraRow(labelVal = '', valueVal = '', isHidden = false) {
             let rowBox = new St.BoxLayout({ vertical: false, style: 'spacing: 6px;' });
 
-            let labelEntry = new St.Entry({ text: labelVal, hint_text: _('Label (e.g. 2FA)') });
+            let labelEntry = new St.Entry({ text: labelVal, hint_text: _('Label') });
             labelEntry.set_width(120);
 
             let valueEntry = new St.Entry({ text: valueVal, hint_text: _('Value') });
