@@ -39,6 +39,13 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this._revealHintPalette = null; // the palette it was styled with
         this._emptyLabel = null; // "Vault is empty…" label (no services at all)
         this._emptyLabelPalette = null; // the palette it was styled with
+        // "Nothing found…" label, for a filter (a search or a category) that
+        // leaves no card on screen. The three labels are mutually exclusive —
+        // an empty vault, a hidden-by-privacy list and a filter that matched
+        // nothing are three different states — and each one is dropped as soon
+        // as its own state ends.
+        this._noMatchLabel = null;
+        this._noMatchLabelPalette = null;
 
         this._buildUI();
     }
@@ -202,6 +209,8 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         this._emptyLabelPalette = null;
         this._revealHint = null;
         this._revealHintPalette = null;
+        this._noMatchLabel = null;
+        this._noMatchLabelPalette = null;
 
         let container = new St.BoxLayout({
             vertical: true,
@@ -459,12 +468,14 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
             this.itemsBox.insert_child_above(actor, null);
     }
 
-    // The non-card child that always belongs below every card.
+    // The non-card child that always belongs below every card. At most one of
+    // the three is ever on screen; the order here is only the order they are
+    // consulted in, and the states they stand for cannot overlap.
     _trailingLabel() {
-        return this._revealHint ?? this._emptyLabel ?? null;
+        return this._noMatchLabel ?? this._revealHint ?? this._emptyLabel ?? null;
     }
 
-    // A re-theme has to reach the two standalone labels as well — they bake
+    // A re-theme has to reach the standalone labels as well — they bake
     // themeColors() into their style once, and are not restyled in place like the
     // cards are. Each is a single actor, and the list is either empty or fully
     // hidden whenever one of them is on screen, so dropping it costs nothing and
@@ -477,6 +488,10 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         if (this._revealHint && this._revealHintPalette !== palette) {
             this._revealHint.destroy();
             this._revealHint = null;
+        }
+        if (this._noMatchLabel && this._noMatchLabelPalette !== palette) {
+            this._noMatchLabel.destroy();
+            this._noMatchLabel = null;
         }
     }
 
@@ -612,6 +627,50 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         } else if (!showRevealHint && this._revealHint) {
             this._revealHint.destroy();
             this._revealHint = null;
+        }
+
+        // A filter that leaves nothing on screen used to say nothing at all: the
+        // list just went blank, which is indistinguishable from the menu having
+        // failed to open. Say so instead — and name the category when one is
+        // selected, because that is the case where the list is deliberately not
+        // empty and the user needs to know the filter, not the vault, is what
+        // came up short.
+        //
+        // The three "nothing to show" states are kept apart on purpose:
+        //   * an empty vault is _emptyLabel's business, so require some cards to
+        //     exist at all;
+        //   * hide-All mode is privacy, not a failed search, and it has its own
+        //     hint — so a blank list there is not a "nothing found";
+        //   * what is left really is a filter that matched nothing.
+        const showNoMatch = this.serviceCardEntries.length > 0 &&
+            !showRevealHint &&
+            visibleCount === 0;
+        if (showNoMatch) {
+            // The category name goes in rather than a generic "this category",
+            // because a wrong category name is a real mistake the user can then
+            // see and correct.
+            const text = cat === ALL_CATEGORY
+                ? _('Nothing found.')
+                : _('Nothing found in «%s».').replace('%s', cat);
+            if (!this._noMatchLabel) {
+                const palette = themeColors();
+                this._noMatchLabel = new St.Label({
+                    text,
+                    style: `color: ${palette.hint}; font-size: 12px; padding: 16px;`,
+                    x_align: Clutter.ActorAlign.CENTER
+                });
+                this._noMatchLabelPalette = palette;
+                this.itemsBox.add_child(this._noMatchLabel);
+            } else if (this._noMatchLabel.get_text() !== text) {
+                // The filter moved from one nothing-found state to another — a
+                // different category, or a category back to "All" — so the label
+                // is still the right label but its text is not. Without this it
+                // would go on naming a category that is no longer selected.
+                this._noMatchLabel.set_text(text);
+            }
+        } else if (this._noMatchLabel) {
+            this._noMatchLabel.destroy();
+            this._noMatchLabel = null;
         }
     }
 
