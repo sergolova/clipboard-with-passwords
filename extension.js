@@ -19,7 +19,9 @@ import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
-import {displayName, fileIconFor} from './fileIcons.js';
+import {fileIconFor} from './fileIcons.js';
+import {layoutFileNames} from './fileRow.js';
+import {formatCountdown} from './historyInterval.js';
 import {toRenderableColor} from './colorSyntax.js';
 import {CHAIN_BUDGET_MS, imageFormatLabel, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
 import {formatBytes} from './registryBudget.js';
@@ -67,12 +69,9 @@ const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 const INDICATOR_ICON = 'edit-paste-symbolic';
 
 
-// The second line of a file row: at most this many names, each preceded by the
-// system icon for that name, and never fewer than FILE_NAME_MIN_CHARS
-// characters of a name — below that a name is not a name any more, it is an
-// ellipsis with a glyph in front of it.
-const MAX_SHOWN_FILE_NAMES = 5;
-const FILE_NAME_MIN_CHARS = 8;
+// The second line of a file row, rendered: how many names, how much of each and
+// how many were dropped all come from layoutFileNames() in fileRow.js, which
+// also owns the cap and the per-name floor. What is left here is presentation.
 // Height of the icon next to a name. The second line runs at 0.85em of an 11pt
 // base, so a full-size 16px icon would stand taller than the text it labels.
 const FILE_ICON_SIZE = 14;
@@ -1062,47 +1061,34 @@ const ClipboardIndicator = GObject.registerClass({
                 box.add_child(summaryLabel);
 
                 // Line 2: the file names, each with the system's own icon for
-                // it. Dedupe repeated URIs, show at most
-                // MAX_SHOWN_FILE_NAMES, and split the line's character budget
-                // («Preview Size (characters)») between the names instead of
-                // applying it to their concatenation — otherwise the row would
-                // come out several times wider than every other preview, since
-                // five full names side by side are not one MAX_ENTRY_LENGTH.
-                // The icons are not part of that budget either: they are a fixed
-                // 12px each, and a name is worth more readable than a row is
-                // worth narrow.
-                const uniqueNames = display.fileNames.filter((f, i) =>
-                    f && display.fileNames.indexOf(f) === i);
-                // A list of nothing but empty names dedupes down to nothing;
-                // the raw list is still what the user copied, so fall back to it.
-                const source = uniqueNames.length > 0
-                    ? uniqueNames : display.fileNames;
-                const shown = source.slice(0, MAX_SHOWN_FILE_NAMES);
-                const hiddenCount = source.length - shown.length;
-                const perName = Math.max(FILE_NAME_MIN_CHARS,
-                    Math.floor(MAX_ENTRY_LENGTH / Math.max(1, shown.length)));
+                // it. Which names, how much of each, and how many were dropped
+                // is decided by layoutFileNames() — the reasoning, and the
+                // arithmetic that used to sit here, are in that module.
+                const {names, hiddenCount} = layoutFileNames(display.fileNames, {
+                    chars: MAX_ENTRY_LENGTH,
+                });
 
-                if (shown.length > 0) {
+                if (names.length > 0) {
                     const namesBox = new St.BoxLayout({
                         vertical: false,
                         x_expand: true,
                         style: `spacing: ${FILE_NAME_GAP}px;`
                     });
-                    for (const name of shown) {
+                    for (const {raw, text} of names) {
                         const nameBox = new St.BoxLayout({
                             vertical: false,
                             style: `spacing: ${FILE_NAME_ICON_GAP}px;`
                         });
+                        // The icon is decided by the RAW name — a directory's
+                        // trailing "/" is exactly what makes it a directory —
+                        // while the text is the name without it.
                         nameBox.add_child(new St.Icon({
-                            gicon: fileIconFor(name),
+                            gicon: fileIconFor(raw),
                             icon_size: FILE_ICON_SIZE,
                             y_align: Clutter.ActorAlign.CENTER
                         }));
                         const nameLabel = new St.Label({
-                            // A directory's name carries the trailing "/" that
-                            // told the icon it was a directory; that separator is
-                            // not part of what the folder is called.
-                            text: truncate(displayName(name), perName),
+                            text,
                             style_class: 'clipboard-second-line'
                         });
                         nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -2291,26 +2277,9 @@ const ClipboardIndicator = GObject.registerClass({
 
 
         let currentTime = Math.ceil(new Date().getTime() / 1000);
-        let timeLeft = NEXT_HISTORY_CLEAR - currentTime;
-
-        if (timeLeft <= 0) {
-            this.timerLabel.set_text('');
-            return;
-        }
-
-        let hours = Math.floor(timeLeft / 3600);
-        let minutes = Math.floor((timeLeft % 3600) / 60);
-        let seconds = Math.floor(timeLeft % 60);
-
-        let formattedTime = '';
-        if (hours > 0) {
-            formattedTime += `${hours}h `;
-        }
-        if (minutes > 0) {
-            formattedTime += `${minutes}m `;
-        }
-        formattedTime += `${seconds}s`;
-        this.timerLabel.set_text(formattedTime);
+        // A time that has passed formats as the empty string, so the label
+        // empties itself without a branch here.
+        this.timerLabel.set_text(formatCountdown(NEXT_HISTORY_CLEAR - currentTime));
     }
 
     _openSettings() {
