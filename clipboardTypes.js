@@ -73,6 +73,39 @@ export function requestTimeoutMs(entryType) {
 }
 
 /**
+ * Clipboard MIME → short extension label shown next to the image size in the
+ * menu (e.g. "1920 × 1080 · jpg"). Display-only: cache files keep their
+ * content-hash names without an extension.
+ */
+const IMAGE_FORMAT_LABELS = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+};
+
+/**
+ * The short label for an image mimetype.
+ *
+ * The table covers what is actually met, and the fallback covers the rest by
+ * naming the subtype — so an `image/avif` still reads as "avif" rather than
+ * printing the whole mimetype next to the dimensions. The `+xml` removal is for
+ * `image/svg+xml`, which would otherwise label itself "svg+xml".
+ *
+ * @param {?string} mimetype
+ * @returns {?string}
+ */
+export function imageFormatLabel(mimetype) {
+    if (IMAGE_FORMAT_LABELS[mimetype])
+        return IMAGE_FORMAT_LABELS[mimetype];
+    if (mimetype && mimetype.startsWith('image/'))
+        return mimetype.slice('image/'.length).replace('+xml', '');
+    return mimetype;
+}
+
+/**
  * Equivalent spellings of one logical type, in the order the extension prefers
  * them. Only the spelling the owner actually advertises is requested.
  */

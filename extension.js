@@ -21,8 +21,35 @@ import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {displayName, fileIconFor} from './fileIcons.js';
 import {toRenderableColor} from './colorSyntax.js';
-import {CHAIN_BUDGET_MS, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
+import {CHAIN_BUDGET_MS, imageFormatLabel, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
 import {formatBytes} from './registryBudget.js';
+import {truncate} from './strings.js';
+// Every setting this file reads, plus the functions that load and adjust them.
+// Named imports rather than a namespace object, so the read sites below stay
+// plain `if (SHOW_DELETE_BUTTON)`; ES modules make each imported NAME a live
+// binding, so this file still sees the value applySettings() wrote last. The
+// mirrors are a snapshot of the schema, not a copy taken once at load.
+import {
+    BLINK_ICON_ON_COPY, CACHE_IMAGES, CACHE_ONLY_FAVORITE,
+    CASE_SENSITIVE_SEARCH, CLEAR_HISTORY_INTERVAL,
+    CLEAR_HISTORY_ON_INTERVAL, CLEAR_ON_BOOT, COLORIZE_CLIPBOARD,
+    CONFIRM_ON_CLEAR, CONFIRM_ON_PINNED_DELETE, DELAYED_SELECTION_TIMEOUT,
+    DISABLE_DOWN_ARROW, ENABLE_KEYBINDING, EXCLUDED_APPS,
+    FETCH_YOUTUBE_TITLES, KEEP_SELECTED_ON_CLEAR, MAX_ENTRY_LENGTH,
+    MAX_REGISTRY_LENGTH, MAX_TOPBAR_LENGTH, MOVE_ITEM_FIRST,
+    NEXT_HISTORY_CLEAR, NOTIFY_ON_CLEAR, NOTIFY_ON_COPY, NOTIFY_ON_CYCLE,
+    OPEN_AT_CURSOR, PASTE_BUTTON, PASTE_ON_SELECT, PINNED_ON_BOTTOM,
+    PREVIEW_ON_HOVER, PRIVATEMODE, REGEX_SEARCH, SETTINGS_WORK,
+    SHOW_CLEAR_HISTORY_BUTTON, SHOW_DELETE_BUTTON, SHOW_EDIT_BUTTON,
+    SHOW_PIN_BUTTON, SHOW_PREVIEW_BUTTON, SHOW_PRIVATE_MODE,
+    SHOW_SEARCH_BAR, SHOW_SETTINGS_BUTTON, SHOW_TAG_BUTTON,
+    STRIP_LINE_BREAKS, STRIP_TEXT, TOPBAR_DISPLAY_MODE,
+    VAULT_CLEAR_CLIPBOARD, VAULT_CLEAR_CLIPBOARD_TIMEOUT,
+    VAULT_COPY_TO_HISTORY, VAULT_ENABLED, VAULT_FORMAT_7Z,
+    VAULT_FORMAT_7Z_USER_SET, VAULT_PASSWORD_REQUEST,
+    VAULT_RESET_SEARCH_ON_CLOSE, applySettings, resetExcludedApps,
+    setNextHistoryClear, stripClipboardEdges,
+} from './clipboardSettings.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
@@ -39,61 +66,6 @@ const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
 const INDICATOR_ICON = 'edit-paste-symbolic';
 
-let DELAYED_SELECTION_TIMEOUT = 750;
-let MAX_REGISTRY_LENGTH = 15;
-let MAX_ENTRY_LENGTH = 50;
-let CACHE_ONLY_FAVORITE = false;
-let DELETE_ENABLED = true;
-let MOVE_ITEM_FIRST = false;
-let ENABLE_KEYBINDING = true;
-let PRIVATEMODE = false;
-let NOTIFY_ON_COPY = true;
-let NOTIFY_ON_CYCLE = true;
-let NOTIFY_ON_CLEAR = true;
-let CONFIRM_ON_CLEAR = true;
-let CONFIRM_ON_PINNED_DELETE = false;
-let MAX_TOPBAR_LENGTH = 15;
-let TOPBAR_DISPLAY_MODE = 1; //0 - only icon, 1 - only clipboard content, 2 - both, 3 - neither
-let CLEAR_ON_BOOT = false;
-let PASTE_ON_SELECT = false;
-let DISABLE_DOWN_ARROW = false;
-let BLINK_ICON_ON_COPY = false;
-let STRIP_TEXT = false;
-let STRIP_LINE_BREAKS = false;
-let KEEP_SELECTED_ON_CLEAR = false;
-let PASTE_BUTTON = true;
-let PINNED_ON_BOTTOM = false;
-let CACHE_IMAGES = true;
-let EXCLUDED_APPS = [];
-let CLEAR_HISTORY_ON_INTERVAL = false;
-let CLEAR_HISTORY_INTERVAL = 60;
-let NEXT_HISTORY_CLEAR = -1;
-let CASE_SENSITIVE_SEARCH = false;
-let REGEX_SEARCH = false;
-let OPEN_AT_CURSOR = false;
-let SHOW_SEARCH_BAR = true;
-let SHOW_PRIVATE_MODE = true;
-let SHOW_SETTINGS_BUTTON = true;
-let SHOW_CLEAR_HISTORY_BUTTON = true;
-let SHOW_DELETE_BUTTON = true;
-let SHOW_TAG_BUTTON = true;
-let SHOW_PIN_BUTTON = true;
-let SHOW_EDIT_BUTTON = true;
-let SHOW_PREVIEW_BUTTON = true;
-let PREVIEW_ON_HOVER = true;
-let COLORIZE_CLIPBOARD = true;
-let FETCH_YOUTUBE_TITLES = false;
-let VAULT_ENABLED = true;
-let VAULT_COPY_TO_HISTORY = false;
-let VAULT_FORMAT_7Z = false;
-// Whether the user explicitly chose the vault format (true) or the setting
-// still sits at its default (false). Used to keep legacy archives from being
-// silently converted just because the *default* changed.
-let VAULT_FORMAT_7Z_USER_SET = false;
-let VAULT_CLEAR_CLIPBOARD = true;
-let VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
-let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
-let VAULT_RESET_SEARCH_ON_CLOSE = true;
 
 // The second line of a file row: at most this many names, each preceded by the
 // system icon for that name, and never fewer than FILE_NAME_MIN_CHARS
@@ -124,157 +96,6 @@ const TOO_LARGE_NOTICE_LATCH_MS = 30000;
 // transfers crashed the shell (see _refreshIndicator notes).
 const CAPTURE_SETTLE_MS = 120;
 
-/*
- * Strip leading/trailing whitespace from a text value according to the
- * STRIP_TEXT / STRIP_LINE_BREAKS settings:
- * - neither:  no change
- * - STRIP_TEXT only: remove leading/trailing spaces and tabs (keeps line breaks)
- * - STRIP_LINE_BREAKS only: remove leading/trailing line breaks (keeps spaces)
- * - both: full trim of any alternating mix (equivalent to String.trim())
- */
-function stripClipboardEdges(text) {
-    if (STRIP_TEXT && STRIP_LINE_BREAKS)
-        return text.replace(/^\s+|\s+$/g, '');
-    if (STRIP_TEXT)
-        return text.replace(/^[ \t]+|[ \t]+$/g, '');
-    if (STRIP_LINE_BREAKS)
-        return text.replace(/^[\r\n]+|[\r\n]+$/g, '');
-    return text;
-}
-
-// Clipboard MIME → short extension label shown next to the image size in the
-// menu (e.g. "1920 × 1080 · jpg"). Display-only: cache files keep their
-// content-hash names without an extension.
-const IMAGE_FORMAT_LABELS = {
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/jpg': 'jpg',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/svg+xml': 'svg',
-};
-
-function imageFormatLabel(mimetype) {
-    if (IMAGE_FORMAT_LABELS[mimetype])
-        return IMAGE_FORMAT_LABELS[mimetype];
-    if (mimetype && mimetype.startsWith('image/'))
-        return mimetype.slice('image/'.length).replace('+xml', '');
-    return mimetype;
-}
-
-// Which settings need which work when they change.
-//
-// Every setting used to run the same handler, which re-read the whole schema,
-// re-labelled every menu row, re-laid out the topbar, and asked the clipboard
-// for its contents again. Most of that work belongs to a handful of settings:
-// a row's text depends on the preview length and the colourize switch, a row's
-// buttons on the five show-* switches, the topbar on its own three, and so on.
-// The clipboard read is the expensive part — it is a selection round-trip, up
-// to 200 ms per mimetype the owner will not hand over — and it produced the
-// worst consequence, because a string setting bound per keystroke (the vault
-// path entry writes on every keypress) started one whole capture chain per
-// character, none of them serialized against the coalescer in _refreshIndicator.
-//
-// A key in none of these lists still gets its own signal, because the reload
-// every handler starts with is what keeps the cached values in step with the
-// schema — that is what the rest of the code reads. What such a key has no
-// extra work is on screen: it is read at the moment it is used, so nothing
-// visible waits for the change to be applied. `changed` with a null key — the
-// schema itself moving, or a key appearing after an upgrade — is not covered by
-// any per-key signal and runs everything.
-const ITEM_APPEARANCE_KEYS = [
-    PrefsFields.PREVIEW_SIZE,          // row text length
-    PrefsFields.COLORIZE_CLIPBOARD,    // per-type row styling
-    PrefsFields.PASTE_BUTTON,
-    PrefsFields.SHOW_DELETE_BUTTON,
-    PrefsFields.SHOW_TAG_BUTTON,
-    PrefsFields.SHOW_PIN_BUTTON,
-    PrefsFields.SHOW_EDIT_BUTTON,
-    PrefsFields.SHOW_PREVIEW_BUTTON,
-];
-
-const MENU_LAYOUT_KEYS = [
-    PrefsFields.SHOW_SEARCH_BAR,
-    PrefsFields.SHOW_PRIVATE_MODE,
-    PrefsFields.PINNED_ON_BOTTOM,
-    PrefsFields.SHOW_SETTINGS_BUTTON,
-    PrefsFields.SHOW_CLEAR_HISTORY_BUTTON,
-];
-
-const TOPBAR_KEYS = [
-    PrefsFields.TOPBAR_DISPLAY_MODE_ID,
-    PrefsFields.TOPBAR_PREVIEW_SIZE,
-    PrefsFields.DISABLE_DOWN_ARROW,
-];
-
-// Shrinking the history has to drop rows right away, not at the next copy.
-const HISTORY_KEYS = [
-    PrefsFields.HISTORY_SIZE,
-];
-
-// Settings that change the entry itself, so the clipboard has to be read again
-// for the topbar to show what it would have shown before: whether an image may
-// be shown at all, and the two edge-trimming options, which are applied while
-// a payload becomes an entry.
-const CAPTURE_KEYS = [
-    PrefsFields.CACHE_IMAGES,
-    PrefsFields.STRIP_TEXT,
-    PrefsFields.STRIP_LINE_BREAKS,
-];
-
-const KEYBINDING_KEYS = [
-    PrefsFields.ENABLE_KEYBINDING,
-    PrefsFields.BINDING_TOGGLE_MENU,
-    PrefsFields.BINDING_CLEAR_HISTORY,
-    PrefsFields.BINDING_PREV_ENTRY,
-    PrefsFields.BINDING_NEXT_ENTRY,
-    PrefsFields.BINDING_PRIVATE_MODE,
-    PrefsFields.BINDING_TOGGLE_PASSWORD_VAULT,
-];
-
-const VAULT_FORMAT_KEYS = [
-    PrefsFields.VAULT_FORMAT_7Z,
-];
-
-const VAULT_ENABLED_KEYS = [
-    PrefsFields.VAULT_ENABLED,
-];
-
-// The settings groups, in the order the full handler used to do their work.
-const SETTINGS_GROUPS = [
-    ['items', ITEM_APPEARANCE_KEYS],
-    ['menu', MENU_LAYOUT_KEYS],
-    ['topbar', TOPBAR_KEYS],
-    ['capture', CAPTURE_KEYS],
-    ['history', HISTORY_KEYS],
-    ['keybindings', KEYBINDING_KEYS],
-    ['vault-format', VAULT_FORMAT_KEYS],
-    ['vault-enabled', VAULT_ENABLED_KEYS],
-];
-
-// The work each key is part of, as a lookup from the key itself, so connecting
-// one signal per key does not need the group threaded through it. A key that is
-// in here is a typo away from doing nothing at all, so the table is checked
-// against PrefsFields once, when the signals are connected: a key that is not a
-// real setting, or one that two groups both claim, is a load-time error rather
-// than a switch that quietly stops working.
-const SETTINGS_WORK = (() => {
-    const work = new Map();
-    for (const [group, keys] of SETTINGS_GROUPS) {
-        for (const key of keys) {
-            if (work.has(key))
-                throw new Error(`Clipboard Indicator: ${key} is claimed by two settings groups`);
-            work.set(key, group);
-        }
-    }
-
-    const known = new Set(Object.values(PrefsFields));
-    const unknown = [...work.keys()].filter(key => !known.has(key));
-    if (unknown.length)
-        throw new Error(`Clipboard Indicator: settings work for keys not in the schema: ${unknown.join(', ')}`);
-
-    return work;
-})();
 
 export default class ClipboardIndicatorExtension extends Extension {
     enable() {
@@ -294,7 +115,7 @@ export default class ClipboardIndicatorExtension extends Extension {
     disable() {
         this.clipboardIndicator.destroy();
         this.clipboardIndicator = null;
-        EXCLUDED_APPS = [];
+        resetExcludedApps();
     }
 }
 
@@ -700,14 +521,14 @@ const ClipboardIndicator = GObject.registerClass({
                 const display = entry.getURIListDisplay();
                 if (display) {
                     this._buttonText.set_text(
-                        `${display.count} ${_('file(s) in')} ${this._truncate(display.commonPath || '/', MAX_TOPBAR_LENGTH)}`
+                        `${display.count} ${_('file(s) in')} ${truncate(display.commonPath || '/', MAX_TOPBAR_LENGTH)}`
                     );
                 } else {
                     this._buttonText.set_text(_('(files)'));
                 }
                 this._buttonImgPreview.destroy_all_children();
             } else if (entry.isText()) {
-                this._buttonText.set_text(this._truncate(entry.isProtected() ? entry.getMaskedValue() : entry.getStringValue(), MAX_TOPBAR_LENGTH));
+                this._buttonText.set_text(truncate(entry.isProtected() ? entry.getMaskedValue() : entry.getStringValue(), MAX_TOPBAR_LENGTH));
                 this._buttonImgPreview.destroy_all_children();
             } else if (entry.isImage()) {
                 this._buttonText.set_text('');
@@ -1171,18 +992,6 @@ const ClipboardIndicator = GObject.registerClass({
         }
     }
 
-    _truncate(string, length) {
-        if (length < 2)
-            return string.substring(0, length);
-
-        let shortened = string.replace(/\s+/g, ' ');
-        let chars = [...shortened];
-
-        if (chars.length > length)
-            shortened = chars.slice(0, length - 1).join('') + '…';
-
-        return shortened;
-    }
 
     // Content-box insertion that respects an existing tag: the tag must stay
     // to the RIGHT of the content (for hidden-label two-line items like
@@ -1246,7 +1055,7 @@ const ClipboardIndicator = GObject.registerClass({
                 // Line 1: N file(s) in /path — truncate so a long path cannot
                 // stretch the whole menu off-screen.
                 const summaryLabel = new St.Label({
-                    text: this._truncate(`${display.count} ${_('file(s) in')} ${display.commonPath || '/'}`, MAX_ENTRY_LENGTH),
+                    text: truncate(`${display.count} ${_('file(s) in')} ${display.commonPath || '/'}`, MAX_ENTRY_LENGTH),
                     x_expand: true
                 });
                 summaryLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -1293,7 +1102,7 @@ const ClipboardIndicator = GObject.registerClass({
                             // A directory's name carries the trailing "/" that
                             // told the icon it was a directory; that separator is
                             // not part of what the folder is called.
-                            text: this._truncate(displayName(name), perName),
+                            text: truncate(displayName(name), perName),
                             style_class: 'clipboard-second-line'
                         });
                         nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -1349,7 +1158,7 @@ const ClipboardIndicator = GObject.registerClass({
             box.add_child(swatch);
 
             const label = new St.Label({
-                text: this._truncate(colorText, MAX_ENTRY_LENGTH),
+                text: truncate(colorText, MAX_ENTRY_LENGTH),
                 x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER
             });
@@ -1374,11 +1183,11 @@ const ClipboardIndicator = GObject.registerClass({
             };
 
             const line1Text = count > 0
-                ? this._truncate(displayLine(first), MAX_ENTRY_LENGTH)
+                ? truncate(displayLine(first), MAX_ENTRY_LENGTH)
                 : '';
 
             let line2Text = count > 1
-                ? this._truncate(displayLine(second), MAX_ENTRY_LENGTH)
+                ? truncate(displayLine(second), MAX_ENTRY_LENGTH)
                 : '';
 
             if (count > 2) {
@@ -1394,7 +1203,7 @@ const ClipboardIndicator = GObject.registerClass({
                 this.urlMetadataManager && this.urlMetadataManager.canHandle(urlText)) {
                 const cachedMeta = this.urlMetadataManager.getCachedMetadata(urlText);
                 if (cachedMeta && cachedMeta.title) {
-                    this._renderTwoLineBox(menuItem, this._truncate(urlText, MAX_ENTRY_LENGTH), this._truncate(cachedMeta.title, 80));
+                    this._renderTwoLineBox(menuItem, truncate(urlText, MAX_ENTRY_LENGTH), truncate(cachedMeta.title, 80));
                 } else {
                     if (menuItem._twoLineBox) {
                         if (menuItem.actor.contains(menuItem._twoLineBox)) {
@@ -1403,12 +1212,12 @@ const ClipboardIndicator = GObject.registerClass({
                         menuItem._twoLineBox = null;
                     }
                     menuItem.label.show();
-                    menuItem.label.set_text(this._truncate(urlText, MAX_ENTRY_LENGTH));
+                    menuItem.label.set_text(truncate(urlText, MAX_ENTRY_LENGTH));
 
                     if (!cachedMeta || (!cachedMeta.title && !cachedMeta.failed)) {
                         this.urlMetadataManager.fetchMetadataAsync(urlText).then(meta => {
                             if (meta && meta.title && !this._destroyed && menuItem.actor) {
-                                this._renderTwoLineBox(menuItem, this._truncate(urlText, MAX_ENTRY_LENGTH), this._truncate(meta.title, 80));
+                                this._renderTwoLineBox(menuItem, truncate(urlText, MAX_ENTRY_LENGTH), truncate(meta.title, 80));
                             }
                         }).catch(e => {
                             logError('Error fetching URL metadata:', e);
@@ -1423,7 +1232,7 @@ const ClipboardIndicator = GObject.registerClass({
                     menuItem._twoLineBox = null;
                 }
                 menuItem.label.show();
-                menuItem.label.set_text(this._truncate(
+                menuItem.label.set_text(truncate(
                     (entry.isURL() || entry.isEmail()) ? urlText : rawText,
                     MAX_ENTRY_LENGTH));
             }
@@ -2440,7 +2249,7 @@ const ClipboardIndicator = GObject.registerClass({
         }
 
         const currentTime = Math.ceil(new Date().getTime() / 1000);
-        NEXT_HISTORY_CLEAR = currentTime + CLEAR_HISTORY_INTERVAL * 60;
+        setNextHistoryClear(currentTime + CLEAR_HISTORY_INTERVAL * 60);
         const timeoutMs = (NEXT_HISTORY_CLEAR - currentTime) * 1000;
 
         this.extension.settings.set_int64(PrefsFields.NEXT_HISTORY_CLEAR, NEXT_HISTORY_CLEAR);
@@ -2604,90 +2413,10 @@ const ClipboardIndicator = GObject.registerClass({
             this._bindShortcuts();
     }
 
+    // Every setting the code reads is loaded here, in one place, by the module
+    // that owns the mirrors. Nothing in this file talks to the schema.
     _fetchSettings() {
-        const {settings} = this.extension;
-        MAX_REGISTRY_LENGTH = settings.get_int(PrefsFields.HISTORY_SIZE);
-        MAX_ENTRY_LENGTH = settings.get_int(PrefsFields.PREVIEW_SIZE);
-        CACHE_ONLY_FAVORITE = settings.get_boolean(PrefsFields.CACHE_ONLY_FAVORITE);
-        DELETE_ENABLED = settings.get_boolean(PrefsFields.DELETE);
-        MOVE_ITEM_FIRST = settings.get_boolean(PrefsFields.MOVE_ITEM_FIRST);
-        NOTIFY_ON_COPY = settings.get_boolean(PrefsFields.NOTIFY_ON_COPY);
-        NOTIFY_ON_CYCLE = settings.get_boolean(PrefsFields.NOTIFY_ON_CYCLE);
-        NOTIFY_ON_CLEAR = settings.get_boolean(PrefsFields.NOTIFY_ON_CLEAR);
-        CONFIRM_ON_CLEAR = settings.get_boolean(PrefsFields.CONFIRM_ON_CLEAR);
-        CONFIRM_ON_PINNED_DELETE = settings.get_boolean(PrefsFields.CONFIRM_ON_PINNED_DELETE);
-        ENABLE_KEYBINDING = settings.get_boolean(PrefsFields.ENABLE_KEYBINDING);
-        MAX_TOPBAR_LENGTH = settings.get_int(PrefsFields.TOPBAR_PREVIEW_SIZE);
-        TOPBAR_DISPLAY_MODE = settings.get_int(PrefsFields.TOPBAR_DISPLAY_MODE_ID);
-        CLEAR_ON_BOOT = settings.get_boolean(PrefsFields.CLEAR_ON_BOOT);
-        PASTE_ON_SELECT = settings.get_boolean(PrefsFields.PASTE_ON_SELECT);
-        DISABLE_DOWN_ARROW = settings.get_boolean(PrefsFields.DISABLE_DOWN_ARROW);
-        BLINK_ICON_ON_COPY = settings.get_boolean(PrefsFields.BLINK_ICON_ON_COPY);
-        STRIP_TEXT = settings.get_boolean(PrefsFields.STRIP_TEXT);
-        STRIP_LINE_BREAKS = settings.get_boolean(PrefsFields.STRIP_LINE_BREAKS);
-        KEEP_SELECTED_ON_CLEAR = settings.get_boolean(PrefsFields.KEEP_SELECTED_ON_CLEAR);
-        PASTE_BUTTON = settings.get_boolean(PrefsFields.PASTE_BUTTON);
-        PINNED_ON_BOTTOM = settings.get_boolean(PrefsFields.PINNED_ON_BOTTOM);
-        CACHE_IMAGES = settings.get_boolean(PrefsFields.CACHE_IMAGES);
-        EXCLUDED_APPS = settings.get_strv(PrefsFields.EXCLUDED_APPS);
-        CLEAR_HISTORY_ON_INTERVAL = settings.get_boolean(PrefsFields.CLEAR_HISTORY_ON_INTERVAL);
-        CLEAR_HISTORY_INTERVAL = settings.get_int(PrefsFields.CLEAR_HISTORY_INTERVAL);
-        NEXT_HISTORY_CLEAR = settings.get_int64(PrefsFields.NEXT_HISTORY_CLEAR);
-        CASE_SENSITIVE_SEARCH = settings.get_boolean(PrefsFields.CASE_SENSITIVE_SEARCH);
-        REGEX_SEARCH = settings.get_boolean(PrefsFields.REGEX_SEARCH);
-        OPEN_AT_CURSOR = settings.get_boolean(PrefsFields.OPEN_AT_CURSOR);
-        SHOW_SEARCH_BAR = settings.get_boolean(PrefsFields.SHOW_SEARCH_BAR);
-        SHOW_PRIVATE_MODE = settings.get_boolean(PrefsFields.SHOW_PRIVATE_MODE);
-        SHOW_SETTINGS_BUTTON = settings.get_boolean(PrefsFields.SHOW_SETTINGS_BUTTON);
-        SHOW_CLEAR_HISTORY_BUTTON = settings.get_boolean(PrefsFields.SHOW_CLEAR_HISTORY_BUTTON);
-        SHOW_DELETE_BUTTON = settings.get_boolean(PrefsFields.SHOW_DELETE_BUTTON);
-        SHOW_TAG_BUTTON = settings.get_boolean(PrefsFields.SHOW_TAG_BUTTON);
-        SHOW_PIN_BUTTON = settings.get_boolean(PrefsFields.SHOW_PIN_BUTTON);
-        SHOW_EDIT_BUTTON = settings.get_boolean(PrefsFields.SHOW_EDIT_BUTTON);
-        SHOW_PREVIEW_BUTTON = settings.get_boolean(PrefsFields.SHOW_PREVIEW_BUTTON);
-        try {
-            PREVIEW_ON_HOVER = settings.get_boolean(PrefsFields.PREVIEW_ON_HOVER);
-        } catch (e) {
-            PREVIEW_ON_HOVER = true;
-        }
-        COLORIZE_CLIPBOARD = settings.get_boolean(PrefsFields.COLORIZE_CLIPBOARD);
-        FETCH_YOUTUBE_TITLES = settings.get_boolean(PrefsFields.FETCH_YOUTUBE_TITLES);
-        VAULT_ENABLED = settings.get_boolean(PrefsFields.VAULT_ENABLED);
-        VAULT_COPY_TO_HISTORY = settings.get_boolean(PrefsFields.VAULT_COPY_TO_HISTORY);
-        try {
-            VAULT_FORMAT_7Z = settings.get_boolean(PrefsFields.VAULT_FORMAT_7Z);
-        } catch (e) {
-            VAULT_FORMAT_7Z = false;
-        }
-        try {
-            // `get_user_value` returns null while the key is untouched; any
-            // explicit choice (either direction) makes it non-null.
-            VAULT_FORMAT_7Z_USER_SET = settings.get_user_value(PrefsFields.VAULT_FORMAT_7Z) !== null;
-        } catch (e) {
-            // Cannot tell → be conservative and keep the guard active (disk
-            // format stays the source of truth, no silent conversion).
-            VAULT_FORMAT_7Z_USER_SET = false;
-        }
-        try {
-            VAULT_PASSWORD_REQUEST = settings.get_string(PrefsFields.VAULT_PASSWORD_REQUEST);
-        } catch (e) {
-            VAULT_PASSWORD_REQUEST = 'session';
-        }
-        try {
-            VAULT_RESET_SEARCH_ON_CLOSE = settings.get_boolean(PrefsFields.VAULT_RESET_SEARCH_ON_CLOSE);
-        } catch (e) {
-            VAULT_RESET_SEARCH_ON_CLOSE = true;
-        }
-        try {
-            VAULT_CLEAR_CLIPBOARD = settings.get_boolean(PrefsFields.VAULT_CLEAR_CLIPBOARD);
-        } catch (e) {
-            VAULT_CLEAR_CLIPBOARD = true;
-        }
-        try {
-            VAULT_CLEAR_CLIPBOARD_TIMEOUT = settings.get_int(PrefsFields.VAULT_CLEAR_CLIPBOARD_TIMEOUT);
-        } catch (e) {
-            VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
-        }
+        applySettings(this.extension.settings);
     }
 
     // GSettings emits `changed` for every key change *and* `changed::<key>` for
