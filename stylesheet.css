@@ -211,13 +211,21 @@
     background-color: rgba(229, 62, 62, 0.12);
 }
 
+/* Commas in the two colours below are not a style choice, they are the whole
+ * point of them. St parses stylesheets with a bundled libcroco, a CSS2-era
+ * parser, and it drops — silently, and only for that one declaration — any
+ * value it cannot read. The CSS Color 4 spelling `rgb(76 76 76)` is one of
+ * those, so the second line was rendering in whatever colour it inherited from
+ * its row instead of the grey written here, while `font-size` in the same rule
+ * applied normally. That asymmetry is the tell: the line came out the right size
+ * and the wrong colour, on every type that has a colour of its own. */
 .clipboard-second-line {
     font-size: 0.85em;
-    color: rgb(76 76 76);
+    color: rgb(181,181,181);
 }
 
 .ci-theme-light .clipboard-second-line {
-    color: rgb(52 52 52);
+    color: rgb(52, 52, 52);
 }
 
 /* Visible divider between the pinned/favorites list and the regular history.
