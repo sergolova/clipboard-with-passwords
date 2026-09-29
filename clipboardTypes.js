@@ -21,6 +21,58 @@
 // shell.
 
 /**
+ * How long to wait for one clipboard request before giving up on that type.
+ *
+ * One deadline for everything was a compromise between two failures, and it
+ * lost to the larger one. 200 ms is right for a text request: the types that go
+ * unanswered are the dead-end ones, and waiting them out is pure loss. But a
+ * request for an image is not answered by a buffer the owner already has — the
+ * owner may still have to BUILD it. Measured on a real Qt image editor offering
+ * a 1928x2560 selection:
+ *
+ *     image/png   5 123 880 B   1273 ms
+ *     image/jpeg    477 374 B     32 ms
+ *
+ * So the same selection is 1.3 s in PNG and 32 ms in JPEG, and a single 200 ms
+ * budget cannot serve both. It also cannot simply be given to everything: that
+ * would put the multi-second text dead end straight back.
+ *
+ * The image budget is about four times the worst case measured, which leaves room
+ * for a large screenshot without turning the wait into a stall — and it is
+ * bounded by CHAIN_BUDGET_MS regardless, so an owner that never answers cannot
+ * hang the menu by being offered six image types.
+ */
+export const TEXT_REQUEST_TIMEOUT_MS = 200;
+export const IMAGE_REQUEST_TIMEOUT_MS = 5000;
+
+/**
+ * Ceiling on one whole capture chain, across every candidate it tries.
+ *
+ * The per-request budget is what a single transfer may take; this is what the
+ * entire capture may take. They are separate because the per-request number
+ * cannot be lowered to bound the chain (a large image needs it) and the chain
+ * cannot be raised to suit one type. A capture that overruns returns nothing
+ * rather than holding the clipboard hostage.
+ */
+export const CHAIN_BUDGET_MS = 10000;
+
+/**
+ * The deadline for one request, given the entry type it will produce.
+ *
+ * Keyed on the entry type rather than on the owner's spelling of the request,
+ * because that is the extension's own normalized value — an owner's odd casing
+ * of `IMAGE/PNG` cannot slip past a string comparison on the request.
+ *
+ * @param {?string} entryType the type the entry would be stored as
+ * @returns {number} milliseconds
+ */
+export function requestTimeoutMs(entryType) {
+    return typeof entryType === 'string' && entryType.startsWith('image/')
+        ? IMAGE_REQUEST_TIMEOUT_MS
+        : TEXT_REQUEST_TIMEOUT_MS;
+}
+
+/**
  * Equivalent spellings of one logical type, in the order the extension prefers
  * them. Only the spelling the owner actually advertises is requested.
  */

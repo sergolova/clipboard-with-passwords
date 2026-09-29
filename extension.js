@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
@@ -20,7 +21,7 @@ import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {displayName, fileIconFor} from './fileIcons.js';
 import {toRenderableColor} from './colorSyntax.js';
-import {offeredTypeCandidates, preferLastSuccessful} from './clipboardTypes.js';
+import {CHAIN_BUDGET_MS, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
@@ -3348,15 +3349,31 @@ const ClipboardIndicator = GObject.registerClass({
     }
     // One request for one advertised type. Yields a ClipboardEntry, or null when
     // the owner has nothing to give for it (unoffered, refused or empty).
-    async #readClipboardType(request, entryType) {
+    //
+    // `deadlineUs` is the capture chain's overall budget, in microseconds: this
+    // request may not outlive it, however generous its own type's budget is.
+    async #readClipboardType(request, entryType, deadlineUs) {
         return await new Promise(resolve => {
+            // The type decides the patience — see requestTimeoutMs(). An image
+            // owner can still be building the answer, and a text owner that
+            // never answers must not be waited for.
+            const wantedUs = requestTimeoutMs(entryType) * 1000;
+            const remainingUs = deadlineUs === undefined
+                ? wantedUs
+                : deadlineUs - GLib.get_monotonic_time();
+            const budgetUs = Math.min(wantedUs, Math.max(0, remainingUs));
+            if (budgetUs <= 0) {
+                resolve(null);
+                return;
+            }
+
             let resolved = false;
             const timeoutId = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
                     resolve(null);
                 }
-            }, 200);
+            }, budgetUs / 1000);
 
             try {
                 this.extension.clipboard.get_content(CLIPBOARD_TYPE, request, async (clipBoard, bytes) => {
@@ -3433,10 +3450,14 @@ const ClipboardIndicator = GObject.registerClass({
 
         const candidates = preferLastSuccessful(this.#offeredTypeCandidates(), this.#lastSuccessfulRequest);
 
+        // One budget for the whole chain, so several slow types in a row cannot
+        // hold the clipboard for the sum of their per-request budgets.
+        const deadlineUs = GLib.get_monotonic_time() + CHAIN_BUDGET_MS * 1000;
+
         for (const {request, entryType} of candidates) {
             if (this._destroyed) return null;
 
-            const result = await this.#readClipboardType(request, entryType);
+            const result = await this.#readClipboardType(request, entryType, deadlineUs);
             if (!result)
                 continue;
 
