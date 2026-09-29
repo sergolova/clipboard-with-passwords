@@ -13,6 +13,22 @@ import { logWarn } from './logging.js';
 //   'too-large'  — stdout exceeded maxBytes (killed mid-stream)
 //   'read-error' — the stdout/stderr pipe failed for another reason (killed)
 //
+// One warning this module cannot avoid, on every unlock and every save:
+//
+//   Gio.UnixOutputStream has been moved to a separate platform-specific library.
+//   Please update your code to use GioUnix.OutputStream instead.
+//
+// It names this file, at get_stdin_pipe() below, and it is misleading: no code
+// here mentions that type, and it is not this code's to fix. GJS 1.80 moved the
+// GIOUnix* types out of Gio into their own namespace, and logging the notice
+// happens when the returned stream is wrapped — which no change to this file can
+// avoid. Importing gi://GioUnix was tried, both as a static and as a dynamic
+// import, and measured in a nested shell: the warning still fires, with the frame
+// in the file that HAS the import. GNOME Shell's own code emits the identical
+// warning for the sibling type (Gio.UnixInputStream, from loginManager.js
+// inhibit()), which settles the matter — the notice is upstream, it is harmless,
+// and it will be there until the code that produces it changes.
+//
 // Why stream at all: `Gio.Subprocess.communicate_utf8_async` buffers the
 // ENTIRE stdout before its callback runs, so a crafted or corrupt vault could
 // make the shell allocate unbounded memory and only fail the MAX_VAULT_JSON_BYTES
