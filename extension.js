@@ -18,6 +18,7 @@ import {Registry, ClipboardEntry} from './registry.js';
 import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
+import {displayName, fileIconFor} from './fileIcons.js';
 import {offeredTypeCandidates, preferLastSuccessful} from './clipboardTypes.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
@@ -90,6 +91,21 @@ let VAULT_CLEAR_CLIPBOARD = true;
 let VAULT_CLEAR_CLIPBOARD_TIMEOUT = 20;
 let VAULT_PASSWORD_REQUEST = 'session'; // 'session' | 'every-open' | 'after-sleep'
 let VAULT_RESET_SEARCH_ON_CLOSE = true;
+
+// The second line of a file row: at most this many names, each preceded by the
+// system icon for that name, and never fewer than FILE_NAME_MIN_CHARS
+// characters of a name — below that a name is not a name any more, it is an
+// ellipsis with a glyph in front of it.
+const MAX_SHOWN_FILE_NAMES = 5;
+const FILE_NAME_MIN_CHARS = 8;
+// Height of the icon next to a name. The second line runs at 0.85em of an 11pt
+// base, so a full-size 16px icon would stand taller than the text it labels.
+const FILE_ICON_SIZE = 12;
+// Gap between a name and its icon, and between one name and the next. Wider than
+// the box default so the list still reads as a list now that each name has a
+// glyph before it.
+const FILE_NAME_ICON_GAP = 3;
+const FILE_NAME_GAP = 8;
 
 // How long the clipboard must stay quiet before a capture chain starts (and
 // how the re-capture after a queued change waits before reading again). One
@@ -1218,25 +1234,63 @@ const ClipboardIndicator = GObject.registerClass({
                 summaryLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 box.add_child(summaryLabel);
 
-                // Line 2: file names — dedupe repeated URIs, show at most 5,
-                // truncate with the same MAX_ENTRY_LENGTH as every other
-                // preview («Preview Size (characters)»), ellipsize as a
-                // display-level guard.
-                const maxShown = 5;
-                let shown = display.fileNames.filter((f, i) =>
-                    f && display.fileNames.indexOf(f) === i).slice(0, maxShown);
-                if (shown.length === 0) shown = display.fileNames.slice(0, maxShown);
-                let fileText = shown.join(',  ');
-                if (display.fileNames.length > maxShown) {
-                    fileText += ', …';
+                // Line 2: the file names, each with the system's own icon for
+                // it. Dedupe repeated URIs, show at most
+                // MAX_SHOWN_FILE_NAMES, and split the line's character budget
+                // («Preview Size (characters)») between the names instead of
+                // applying it to their concatenation — otherwise the row would
+                // come out several times wider than every other preview, since
+                // five full names side by side are not one MAX_ENTRY_LENGTH.
+                // The icons are not part of that budget either: they are a fixed
+                // 12px each, and a name is worth more readable than a row is
+                // worth narrow.
+                const uniqueNames = display.fileNames.filter((f, i) =>
+                    f && display.fileNames.indexOf(f) === i);
+                // A list of nothing but empty names dedupes down to nothing;
+                // the raw list is still what the user copied, so fall back to it.
+                const source = uniqueNames.length > 0
+                    ? uniqueNames : display.fileNames;
+                const shown = source.slice(0, MAX_SHOWN_FILE_NAMES);
+                const hiddenCount = source.length - shown.length;
+                const perName = Math.max(FILE_NAME_MIN_CHARS,
+                    Math.floor(MAX_ENTRY_LENGTH / Math.max(1, shown.length)));
+
+                if (shown.length > 0) {
+                    const namesBox = new St.BoxLayout({
+                        vertical: false,
+                        x_expand: true,
+                        style: `spacing: ${FILE_NAME_GAP}px;`
+                    });
+                    for (const name of shown) {
+                        const nameBox = new St.BoxLayout({
+                            vertical: false,
+                            style: `spacing: ${FILE_NAME_ICON_GAP}px;`
+                        });
+                        nameBox.add_child(new St.Icon({
+                            gicon: fileIconFor(name),
+                            icon_size: FILE_ICON_SIZE,
+                            y_align: Clutter.ActorAlign.CENTER
+                        }));
+                        const nameLabel = new St.Label({
+                            // A directory's name carries the trailing "/" that
+                            // told the icon it was a directory; that separator is
+                            // not part of what the folder is called.
+                            text: this._truncate(displayName(name), perName),
+                            style_class: 'clipboard-second-line'
+                        });
+                        nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                        nameBox.add_child(nameLabel);
+                        namesBox.add_child(nameBox);
+                    }
+                    if (hiddenCount > 0) {
+                        const moreLabel = new St.Label({
+                            text: '…',
+                            style_class: 'clipboard-second-line'
+                        });
+                        namesBox.add_child(moreLabel);
+                    }
+                    box.add_child(namesBox);
                 }
-                const fileNamesLabel = new St.Label({
-                    text: this._truncate(fileText, MAX_ENTRY_LENGTH),
-                    style_class: 'clipboard-second-line',
-                    x_expand: true
-                });
-                fileNamesLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                box.add_child(fileNamesLabel);
 
                 this._insertContentBox(menuItem, box);
                 menuItem._twoLineBox = box;

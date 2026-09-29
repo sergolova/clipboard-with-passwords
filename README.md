@@ -17,7 +17,7 @@ Clipboard entries are detected and visually distinguished by their content type,
 | **E-mail**          | `user@example.com`                                                                    |
 | **URL**             | `https://github.com`                                                                  |
 | **YouTube URL**     | `https://www.youtube.com/watch?v=dQw4w9WgXcQ` with video title                        |
-| **File list**       | dragged/copied files show the file names                                              |
+| **File list**       | dragged/copied files show the file names, each with its own system icon               |
 | **Multi-line text** | shows a preview of the non-empty lines with line count                                |
 | **HTML/CSS colors** | predefined color names + hex codes (`#ff5500`,`#f50`) get a real color swatch preview |
 | **Images**          | proportional thumbnails with size & format, full-screen preview on hover         |
@@ -30,7 +30,27 @@ Type-based coloring can be turned off in the settings («Colorize clipboard cont
 
 Image previews: see the dedicated [🖼️ Image previews](#image-previews) section below.
 
+File lists: see the dedicated [📁 File list previews](#file-list-previews) section below.
+
 For copied **YouTube links**, the video title can be fetched via the YouTube oEmbed API and shown under the URL. This is **off by default** and enabled in the settings («Fetch YouTube video titles»). ⚠️ **Enabling it sends the copied YouTube link (clipboard data) to a third party** — `https://www.youtube.com/oembed` (see [Network access](SECURITY.md#network-access)).
+
+<a name="file-list-previews"></a>
+
+### 📁 File list previews
+A copied **file list** shows the file names on a second line, and every name is preceded by **the system icon for that file** — the same icon your file manager shows. Both the file type and the icon come from the desktop's own tables (the freedesktop MIME database and your icon theme), so they follow your system rather than a list built into the extension:
+
+- **The file name decides, and nothing else.** `report.pdf` gets the PDF icon, `photo.jpg` the JPEG one, `notes.txt` the text one — whatever artwork *your* theme provides for that type.
+- **A copied folder** gets the folder icon, and is written as its name: `Documents`, not `Documents/`.
+- **An unknown, missing or dotfile extension** — `noextension`, `thing.weirdextension`, `.bashrc` — still gets an icon: the generic file icon, from the same tables.
+- **Every name has an icon.** There is no "no icon" case; a broken MIME database falls back to the generic file icon rather than leaving a gap.
+
+**The disk is never touched.** The file is never opened, `stat`ed or sniffed — the name alone decides. That is not just a performance choice, it is what makes the feature safe to use at all:
+
+- a file on an **unmounted volume**, a path you have **no permission** to read, or a file that has since been **deleted** all resolve exactly like a readable one;
+- the icon keeps describing **the name you copied**, not whatever the disk happens to hold now — rename the file afterwards and the row still shows the icon of the name that was copied;
+- an icon derived from the name is the **same information the name in the menu already shows**, so nothing about your files is disclosed that was not already on screen.
+
+Answers are memoized per name for the lifetime of the shell session, so re-rendering a row (which happens on every settings change) costs a map lookup instead of a MIME lookup. Nothing is cached to disk, and nothing survives a shell restart.
 
 <a name="image-previews"></a>
 

@@ -629,7 +629,14 @@ export class ClipboardEntry {
     parseURIList () {
         if (!this.isURIList()) return null;
         const text = this.getStringValue();
-        const uris = text.trim().split('\n').filter(u => u.trim().length > 0);
+        // A uri-list is CRLF-terminated (RFC 2483), so splitting on "\n" alone
+        // leaves a carriage return welded to the end of every name but the last:
+        // "report.pdf\r" is not a PDF to anything that reads a name — the
+        // extension is "pdf\r" — and "Documents/\r" no longer looks like a
+        // directory. Trim each line, not just the text around the split.
+        const uris = text.split('\n')
+            .map(u => u.trim())
+            .filter(u => u.length > 0);
         return uris.map(uri => {
             try {
                 return decodeURI(uri.replace(/^file:\/\//, ''));
@@ -645,9 +652,18 @@ export class ClipboardEntry {
 
         const commonPath = this.#findCommonPath(paths);
         const prefix = commonPath.endsWith('/') ? commonPath : commonPath + '/';
-        const fileNames = paths.map(p =>
-            p.startsWith(prefix) ? p.slice(prefix.length) : p
-        );
+        const fileNames = paths.map(p => {
+            const name = p.startsWith(prefix) ? p.slice(prefix.length) : p;
+            if (name)
+                return name;
+            // One directory copied on its own slices down to nothing: the common
+            // path of a single path is that path's own parent, so the prefix eats
+            // the whole thing. What the user copied is the last segment of the
+            // path, and its trailing "/" has to survive — that separator is the
+            // only thing in a name that says it is a directory.
+            const cut = p.replace(/\/+$/, '').lastIndexOf('/');
+            return p.slice(cut + 1);
+        });
 
         return {
             count: paths.length,
