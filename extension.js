@@ -101,7 +101,7 @@ const MAX_SHOWN_FILE_NAMES = 5;
 const FILE_NAME_MIN_CHARS = 8;
 // Height of the icon next to a name. The second line runs at 0.85em of an 11pt
 // base, so a full-size 16px icon would stand taller than the text it labels.
-const FILE_ICON_SIZE = 12;
+const FILE_ICON_SIZE = 14;
 // Gap between a name and its icon, and between one name and the next. Wider than
 // the box default so the list still reads as a list now that each name has a
 // glyph before it.
@@ -1158,11 +1158,14 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     _truncate(string, length) {
-        let shortened = string.replace(/\s+/g, ' ');
+        if (length < 2)
+            return string.substring(0, length);
 
-        let chars = [...shortened]
+        let shortened = string.replace(/\s+/g, ' ');
+        let chars = [...shortened];
+
         if (chars.length > length)
-            shortened = chars.slice(0, length - 1).join('') + '...';
+            shortened = chars.slice(0, length - 1).join('') + '…';
 
         return shortened;
     }
@@ -1285,7 +1288,7 @@ const ClipboardIndicator = GObject.registerClass({
                     }
                     if (hiddenCount > 0) {
                         const moreLabel = new St.Label({
-                            text: '…',
+                            text: '… +' + hiddenCount,
                             style_class: 'clipboard-second-line'
                         });
                         namesBox.add_child(moreLabel);
