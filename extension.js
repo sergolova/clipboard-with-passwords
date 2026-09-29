@@ -22,6 +22,7 @@ import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {displayName, fileIconFor} from './fileIcons.js';
 import {toRenderableColor} from './colorSyntax.js';
 import {CHAIN_BUDGET_MS, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
+import {formatBytes} from './registryBudget.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
@@ -108,6 +109,13 @@ const FILE_ICON_SIZE = 14;
 // glyph before it.
 const FILE_NAME_ICON_GAP = 3;
 const FILE_NAME_GAP = 8;
+
+// How long one "this item was too large" notification keeps other copies from
+// raising the same message. Long enough that holding Ctrl-C and pasting a big
+// file twenty times produces one notification, short enough that the message
+// returns for the next oversized copy rather than being suppressed for the rest
+// of the session.
+const TOO_LARGE_NOTICE_LATCH_MS = 30000;
 
 // How long the clipboard must stay quiet before a capture chain starts (and
 // how the re-capture after a queued change waits before reading again). One
@@ -320,6 +328,11 @@ const ClipboardIndicator = GObject.registerClass({
         }
         this.#captureScheduled = false;
         this.#captureQueued = false;
+        if (this._tooLargeLatchTimeoutId) {
+            clearTimeout(this._tooLargeLatchTimeoutId);
+            this._tooLargeLatchTimeoutId = null;
+        }
+        this._tooLargeNotified = false;
         // Persist the latest clipboard state before the indicator goes away:
         // a pending debounced save must not be lost when the extension is
         // disabled (or the shell restarts right after).
@@ -2228,6 +2241,25 @@ const ClipboardIndicator = GObject.registerClass({
                     }
                 }
 
+                // The ceiling check, before the entry exists anywhere.
+                //
+                // The history is one JSON file with a size the user sets, and the
+                // read path empties the history if that file is over the ceiling.
+                // So an entry that does not fit must be refused HERE, where the
+                // user can be told, rather than admitted and turned into a silent
+                // loss of everything at the next shell start. A 120 000-line text
+                // is 8.1 MB, which is over the default 5 MB ceiling by itself.
+                const plan = this.registry.canStoreEntry(result);
+                if (!plan.fits) {
+                    logWarn('Clipboard Indicator: refused a ' +
+                        `${formatBytes(plan.recordBytes)} clipboard entry — the ` +
+                        `history would reach ${formatBytes(plan.projectedBytes)} ` +
+                        `against a ceiling of ${formatBytes(plan.capBytes)} ` +
+                        `(${formatBytes(plan.shortfallBytes)} over)`);
+                    this._notifyTooLarge(plan);
+                    return;
+                }
+
                 this.#addToCache(result);
                 this._addEntry(result, true, false);
                 this._removeOldestEntries();
@@ -2248,6 +2280,37 @@ const ClipboardIndicator = GObject.registerClass({
                 this._refreshIndicator();
             }
         }
+    }
+
+    // A capture that would not fit in the history is reported, not swallowed.
+    // The message carries the three numbers the remedy needs: how big the thing
+    // was, what the history would become, and what the ceiling is — because
+    // "it was too big" with no figures leaves the user guessing which knob to
+    // turn, and the knob is a number in the settings.
+    _notifyTooLarge(plan) {
+        // Refusals repeat: every copy of a big file would otherwise raise the
+        // same tray notification, one per copy. One is enough to explain it, and
+        // the user is the one who has to dismiss them.
+        if (this._tooLargeNotified) {
+            return;
+        }
+        this._tooLargeNotified = true;
+        this.notifications.show(
+            fmt(_('This clipboard item is %1$s and was not added: the history would grow to %2$s, over the %3$s limit. Raise «Cache file size» in the settings, or clear the history, to keep copying large items.'),
+                formatBytes(plan.recordBytes),
+                formatBytes(plan.projectedBytes),
+                formatBytes(plan.capBytes)),
+            notif => {
+                notif.addAction(_('Cancel'), this._cancelNotification);
+            });
+
+        // The latch is released on the next capture that fits, so the message
+        // comes back only when the situation recurs — not forever after one
+        // oversized copy.
+        const release = setTimeout(() => {
+            this._tooLargeNotified = false;
+        }, TOO_LARGE_NOTICE_LATCH_MS);
+        this._tooLargeLatchTimeoutId = release;
     }
 
     _moveItemFirst(item) {

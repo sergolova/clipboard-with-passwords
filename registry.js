@@ -4,6 +4,7 @@ import St from 'gi://St';
 import { PrefsFields } from './constants.js';
 import { logError } from './logging.js';
 import { DebouncedSaver } from './registrySaver.js';
+import { budgetBytesFrom, planAddition } from './registryBudget.js';
 
 const FileQueryInfoFlags = Gio.FileQueryInfoFlags;
 const FileCopyFlags = Gio.FileCopyFlags;
@@ -93,6 +94,78 @@ export class Registry {
         this._saver.flush();
     }
 
+    // The one definition of what a registry record for an entry looks like.
+    //
+    // Both the writer and the size check go through here, deliberately: if they
+    // each built the record themselves they would drift, and the size check
+    // would quietly measure a different shape than the one that gets written —
+    // which is the one way a "this entry fits" answer could stop being true.
+    //
+    // An image's payload lives in its own cache file, so the record holds a path
+    // and this stays cheap for images. A text entry is stored inline, which is
+    // what makes a very large text the thing that can blow the ceiling.
+    #buildRecord (entry) {
+        const item = {
+            favorite: entry.isFavorite(),
+            mimetype: entry.mimetype()
+        };
+
+        if (entry.isText()) {
+            item.contents = entry.getStringValue();
+        }
+        else if (entry.isImage()) {
+            item.contents = this.getEntryFilename(entry);
+        }
+
+        if (entry.getTag()) item.tag = entry.getTag();
+        if (entry.isProtected()) item.protected = true;
+        return item;
+    }
+
+    // How many bytes this entry will add to the registry file.
+    //
+    // Measured, not estimated: the escape rules of JSON.stringify are not
+    // something to reimplement here, and a per-character guess would be wrong by
+    // a factor of six for anything with non-ASCII in it. The cost is one
+    // stringify of one record, on the capture path only.
+    #recordSizeFor (entry) {
+        try {
+            return new TextEncoder().encode(
+                JSON.stringify(this.#buildRecord(entry))).length;
+        } catch (e) {
+            // A record that cannot even be serialized would certainly not be
+            // written; treat it as not fitting rather than as free.
+            return Number.MAX_SAFE_INTEGER;
+        }
+    }
+
+    // Whether this entry may be added to the history at all, and the numbers
+    // behind the answer. The caller uses `fits` to refuse the entry and the rest
+    // to tell the user why.
+    //
+    // The ceiling is a real limit, not a formality: read() moves a registry over
+    // it aside and starts from an empty history, so letting an entry past this
+    // point is how the user loses everything at the next shell start.
+    canStoreEntry (entry) {
+        let currentBytes = 0;
+        try {
+            const info = Gio.file_new_for_path(this.REGISTRY_PATH)
+                .query_info('*', FileQueryInfoFlags.NONE, null);
+            currentBytes = info.get_size();
+        } catch (e) {
+            // No file yet, or it cannot be read: the first entry always fits.
+            currentBytes = 0;
+        }
+
+        const capBytes = budgetBytesFrom(
+            this.settings.get_int(PrefsFields.CACHE_FILE_SIZE));
+        return planAddition({
+            currentBytes,
+            recordBytes: this.#recordSizeFor(entry),
+            capBytes
+        });
+    }
+
     // Runs on the main loop after the debounce window (or on flush): builds
     // the registry payload and writes it with an asynchronous replace, so a
     // big history never blocks the shell while serializing or writing.
@@ -102,26 +175,16 @@ export class Registry {
         const registryContent = [];
 
         for (let entry of entries) {
-            const item = {
-                favorite: entry.isFavorite(),
-                mimetype: entry.mimetype()
-            };
-
+            const item = this.#buildRecord(entry);
             registryContent.push(item);
 
-            if (entry.isText()) {
-                item.contents = entry.getStringValue();
-            }
-            else if (entry.isImage()) {
-                const filename = this.getEntryFilename(entry);
-                item.contents = filename;
+            if (entry.isImage()) {
+                // The payload file is written on the side; the record only holds
+                // its path.
                 this.writeEntryFile(entry).catch(e => {
                     logError('Clipboard Indicator: failed to cache image entry', e);
                 });
             }
-
-            if (entry.getTag()) item.tag = entry.getTag();
-            if (entry.isProtected()) item.protected = true;
         }
 
         try {
@@ -159,9 +222,24 @@ export class Registry {
             let file = Gio.file_new_for_path(this.REGISTRY_PATH);
             let CACHE_FILE_SIZE = this.settings.get_int(PrefsFields.CACHE_FILE_SIZE);
 
+            // The last-resort guard, not the normal path. canStoreEntry() refuses
+            // anything that would push the registry over the ceiling, so arriving
+            // here means the ceiling was LOWERED under an existing history, or the
+            // file was written by an older version that did not check.
+            //
+            // It is loud, and deliberately so. This used to move the file aside
+            // and return an empty history without a word, which is how 65 records
+            // once disappeared with no more explanation than a shorter menu — and
+            // the second occurrence would overwrite the first backup, taking the
+            // only remaining copy with it.
             const file_info = file.query_info('*', FileQueryInfoFlags.NONE, null);
             if (file_info && file_info.get_size() >= CACHE_FILE_SIZE * 1024 * 1024) {
                 let destination = Gio.file_new_for_path(this.BACKUP_REGISTRY_PATH);
+                logError('Clipboard Indicator: the clipboard history file is ' +
+                    'larger than the «Cache file size» setting, so it was moved ' +
+                    `aside to ${this.BACKUP_REGISTRY_PATH} and the history was ` +
+                    'reset to empty. Nothing was deleted — raise «Cache file ' +
+                    'size» in the settings and restart to read it back.');
                 file.move(destination, FileCopyFlags.OVERWRITE, null, null);
                 return [];
             }
