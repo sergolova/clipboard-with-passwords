@@ -23,7 +23,7 @@ Clipboard entries are detected and visually distinguished by their content type,
 | **Images**          | proportional thumbnails with size & format, full-screen preview on hover         |
 
 <p align="center">
-  <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="450"/>
+  <img src="screenshots/clipboard-menu.png" alt="Clipboard history menu with content-type highlighting" height="500"/>
 </p>
 
 Type-based coloring can be turned off in the settings («Colorize clipboard content»).
@@ -132,7 +132,7 @@ Dialog buttons (service edit dialog):
 | ✖ | Close the dialog |
 
 <p align="center">
-  <img src="screenshots/service-edit-dialog.png" alt="Service edit dialog" height="450"/>
+  <img src="screenshots/service-edit-dialog.png" alt="Service edit dialog" height="500"/>
 </p>
 
 ### 🔍 Vault search & filter
