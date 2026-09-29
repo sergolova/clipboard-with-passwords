@@ -19,6 +19,7 @@ import {AutoLockManager} from './autoLock.js';
 import {DialogManager} from './confirmDialog.js';
 import {PrefsFields, DEFAULT_VAULT_PATH} from './constants.js';
 import {displayName, fileIconFor} from './fileIcons.js';
+import {toRenderableColor} from './colorSyntax.js';
 import {offeredTypeCandidates, preferLastSuccessful} from './clipboardTypes.js';
 import {scanPreviewLines} from './textPreview.js';
 import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
@@ -1304,7 +1305,14 @@ const ClipboardIndicator = GObject.registerClass({
                 menuItem._twoLineBox = null;
             }
             const colorText = entry.getStringValue().trim();
-            const cssColor = entry.needsHashPrefix() ? ('#' + colorText) : colorText;
+            // The value that classified as a colour and the value the swatch can
+            // paint are not the same string: isColor() accepts the modern CSS
+            // Color syntax, and the shell's CSS parser does not. toRenderableColor
+            // rewrites it into the comma form the parser takes, and returns null
+            // for what it does not handle (a named colour), which is then
+            // forwarded as-is — the parser already knows those.
+            const rewritten = toRenderableColor(colorText);
+            const cssColor = rewritten ?? colorText;
             const box = new St.BoxLayout({
                 vertical: false,
                 x_expand: true,
