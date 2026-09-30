@@ -119,6 +119,32 @@ with and still writing the report — that produced a 32-check probe reporting
 Probes live in `tools/local/` only in the sense that their runner does; the
 probes themselves are in `tests/probes/`.
 
+## A pure test cannot check anything about width
+
+A test that runs under plain `gjs` has no Pango layout, no font and no
+allocation, so it cannot answer "does this text fit in 384 px". Anything that
+looks like such a check in a unit test is either measuring something else or
+asserting a number the author chose. `strings_test.js` deliberately tests only
+what is font-independent — the whitespace flattening and the character count —
+and states that a character count cannot stand in for a width.
+
+`probe_rowwidth` is the width check, and it works comparatively: it builds rows
+whose strings have the same character count but very different pixel widths, and
+requires the rows to come out the same width. No particular width is asserted,
+because the width is a CSS value the user can change.
+
+Two things it learned the hard way, both of which would otherwise be rewritten
+wrongly:
+
+- **`get_pixel_size()` cannot prove that ellipsize is cutting.** Once ellipsize
+  is on, St has already given the Pango layout the label's width as its own, so
+  the text's pixel size and the label's allocation are equal by construction.
+  Read the `ellipsize` property instead.
+- **A `PopupMenuItem`'s label does not expand horizontally.** The shell creates
+  it with `y_expand` only, so it asks for its full natural width and never gets
+  cut. It has to be set to expand — and whatever else expands in that box must
+  stop, or the two share the leftover space and the label is cut to half.
+
 ## Known wart
 
 `vault_align_test.js` writes its fixture archives into `tests/align/` and

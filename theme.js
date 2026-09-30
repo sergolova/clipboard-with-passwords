@@ -120,3 +120,47 @@ const LIGHT = {
 export function themeColors() {
     return isDarkTheme() ? DARK : LIGHT;
 }
+// The text this measures is the alphabet rather than any single character, for
+// the reason the module comment in menuWidth.js gives: no one character stands
+// for the average. Averaging over 26 letters cancels out most of the spread
+// between a narrow "i" and a wide "W", and it is deliberately lower-case only —
+// capitals are wider, and a menu full of file names and paths is mostly
+// lower-case.
+const WIDTH_REFERENCE_TEXT = 'abcdefghijklmnopqrstuvwxyz';
+
+/**
+ * Measure how wide one average character is in the theme's own font.
+ *
+ * Measured by laying the text out in the font the shell is actually using, and
+ * by a throwaway St.Label rather than by Pango directly: the label is what the
+ * rows are made of, so it resolves the same font, the same scale factor and the
+ * same theme node that the real labels will. A Pango layout built here with a
+ * hand-assembled font description could disagree with all three.
+ *
+ * The label is added to the stage for the measurement and removed immediately.
+ * A label that is not on the stage has no theme node, so it would fall back to a
+ * default font and report a width for a font no row will ever use.
+ *
+ * @returns {number} px per character, or 0 if the stage is not ready yet
+ */
+export function measurePxPerChar() {
+    try {
+        if (!global.stage)
+            return 0;
+
+        const label = new St.Label({text: WIDTH_REFERENCE_TEXT});
+        global.stage.add_child(label);
+        const [, naturalWidth] = label.get_preferred_width(-1);
+        global.stage.remove_child(label);
+        label.destroy();
+
+        if (!(naturalWidth > 0))
+            return 0;
+
+        return naturalWidth / WIDTH_REFERENCE_TEXT.length;
+    } catch (e) {
+        // Called while the menu is being built, which is early in enable(). A
+        // stage that is not ready yet is normal, not an error worth logging.
+        return 0;
+    }
+}

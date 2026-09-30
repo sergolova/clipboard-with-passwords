@@ -71,8 +71,8 @@ class Settings {
         });
 
         this.field_preview_size = new Adw.SpinRow({
-            title: _("Preview Size (characters)"),
-            subtitle: _("Number of characters shown per entry in the history menu"),
+            title: _("Preview Size"),
+            subtitle: _("How much of each entry the history menu shows. Long single-line text is cut to the width of the row"),
             adjustment: new Gtk.Adjustment({
                 lower: 10,
                 upper: 100,

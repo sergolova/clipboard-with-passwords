@@ -48,6 +48,11 @@
     margin:1em 0 3em 0;
 }
 
+/* No width here on purpose. The menu needs a definite width or Pango's ellipsize
+ * has nothing to cut against and every label grows to fit its own text — which is
+ * why the previews used to be cut by character count instead. The width is
+ * derived at runtime from the «Preview Size» setting and the theme's font, so it
+ * lives in code (see menuWidth.js) and not in the stylesheet. */
 .ci-history-menu-section {
     max-height:450px;
 }

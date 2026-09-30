@@ -25,7 +25,8 @@ import {formatCountdown} from './historyInterval.js';
 import {toRenderableColor} from './colorSyntax.js';
 import {CHAIN_BUDGET_MS, imageFormatLabel, offeredTypeCandidates, preferLastSuccessful, requestTimeoutMs} from './clipboardTypes.js';
 import {formatBytes} from './registryBudget.js';
-import {truncate} from './strings.js';
+import {collapseWhitespace, truncate} from './strings.js';
+import {MAX_MENU_WIDTH_FRACTION, menuWidthFor} from './menuWidth.js';
 // Every setting this file reads, plus the functions that load and adjust them.
 // Named imports rather than a namespace object, so the read sites below stay
 // plain `if (SHOW_DELETE_BUTTON)`; ES modules make each imported NAME a live
@@ -60,7 +61,7 @@ import {UrlMetadataManager} from './urlMetadataManager.js';
 import {PasswordVaultManager, canonicalFormatPath, destCollides} from './passwordVault.js';
 import {MasterPasswordDialog} from './passwordVaultDialog.js';
 import {PasswordVaultMenuSection} from './passwordVaultMenu.js';
-import {themeClass, themeColors} from './theme.js';
+import {measurePxPerChar, themeClass, themeColors} from './theme.js';
 import {logError, logWarn} from './logging.js';
 import {fmt} from './strings.js';
 
@@ -506,16 +507,31 @@ const ClipboardIndicator = GObject.registerClass({
         }, this);
 
         // Create menu sections for items
+        //
+        // The width is applied to BOTH scroll views and not in the stylesheet,
+        // because it comes from the «Preview Size» setting and the theme's font.
+        // See menuWidth.js for why an approximate conversion is good enough, and
+        // _applyMenuWidth() for the clamping.
+        this._menuWidth = this._computeMenuWidth();
+
         // Favorites
         this.favoritesSection = new PopupMenu.PopupMenuSection();
 
         this.scrollViewFavoritesMenuSection = new PopupMenu.PopupMenuSection();
         this.favoritesScrollView = new St.ScrollView({
             style_class: 'ci-favorites-menu-section ci-history-menu-section',
+            style: `width: ${this._menuWidth}px;`,
+            // Without this the scroll view's CHILD is allocated its own natural
+            // width — which, with rows that have no width limit, is as wide as
+            // the longest text in the history — and a horizontal scrollbar
+            // appears to reach the rest of it. Setting the width on the viewport
+            // is not enough; the content has to be told as well.
+            hscrollbar_policy: St.PolicyType.NEVER,
             overlay_scrollbars: true,
             clip_to_allocation: true
         });
         this.favoritesScrollView.add_child(this.favoritesSection.actor);
+        this.favoritesSection.actor.set_style(`width: ${this._menuWidth}px;`);
 
         this.scrollViewFavoritesMenuSection.actor.add_child(this.favoritesScrollView);
         this.favoritesSeparator = new PopupMenu.PopupSeparatorMenuItem();
@@ -526,10 +542,13 @@ const ClipboardIndicator = GObject.registerClass({
         this.scrollViewMenuSection = new PopupMenu.PopupMenuSection();
         this.historyScrollView = new St.ScrollView({
             style_class: 'ci-main-menu-section ci-history-menu-section',
+            style: `width: ${this._menuWidth}px;`,
+            hscrollbar_policy: St.PolicyType.NEVER,
             overlay_scrollbars: true,
             clip_to_allocation: true
         });
         this.historyScrollView.add_child(this.historySection.actor);
+        this.historySection.actor.set_style(`width: ${this._menuWidth}px;`);
 
         this.scrollViewMenuSection.actor.add_child(this.historyScrollView);
 
@@ -868,6 +887,48 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
 
+    // How wide the history menu is, in pixels.
+    //
+    // The font is measured once and kept: the measurement is a throwaway actor on
+    // the stage, and doing it on every settings change would put a label in and
+    // out of the stage each time the user touches any preference. The cost is that
+    // changing the system font leaves the menu at the old width until the
+    // extension is reloaded, which is the lesser of two problems.
+    _computeMenuWidth() {
+        if (this._pxPerChar === undefined)
+            this._pxPerChar = measurePxPerChar();
+
+        const monitor = Main.layoutManager.primaryMonitor ?? global.stage?.get_primary_monitor?.();
+        return menuWidthFor({
+            pxPerChar: this._pxPerChar,
+            previewSize: MAX_ENTRY_LENGTH,
+            maxWidth: Math.round((monitor?.width ?? 1920) * MAX_MENU_WIDTH_FRACTION),
+        });
+    }
+
+    // Push the current width onto both scroll views AND the sections inside them.
+    // All four are needed, and which ones are necessary was measured rather than
+    // assumed:
+    //
+    //   * the scroll view's width alone leaves the section at its own natural
+    //     width, so rows run to the width of the longest text in the history;
+    //   * the section's width alone does not stop the section from being as wide
+    //     as its rows;
+    //   * hscrollbar_policy: NEVER on its own is not enough either — with it and
+    //     no width on the section the rows still measured 800 px in a 517 px
+    //     viewport.
+    //
+    // Both sections, not just the history one: they are the same width on
+    // purpose, or the pinned rows would be visibly narrower than the rest.
+    _applyMenuWidth() {
+        this._menuWidth = this._computeMenuWidth();
+        const style = `width: ${this._menuWidth}px;`;
+        this.favoritesScrollView.set_style(style);
+        this.historyScrollView.set_style(style);
+        this.favoritesSection.actor.set_style(style);
+        this.historySection.actor.set_style(style);
+    }
+
     // Content-box insertion that respects an existing tag: the tag must stay
     // to the RIGHT of the content (for hidden-label two-line items like
     // multiline/URL/file rows), so insert the box before the tag when present,
@@ -899,6 +960,9 @@ const ClipboardIndicator = GObject.registerClass({
             text: line1Text,
             x_expand: true
         });
+        // Both lines expand and are cut at the row's width, for the same reason
+        // the single-line label does — see the note where it is set up.
+        line1.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(line1);
 
         const line2 = new St.Label({
@@ -906,6 +970,7 @@ const ClipboardIndicator = GObject.registerClass({
             style_class: 'clipboard-second-line',
             x_expand: true
         });
+        line2.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(line2);
 
         this._insertContentBox(menuItem, box);
@@ -1094,9 +1159,22 @@ const ClipboardIndicator = GObject.registerClass({
                     menuItem._twoLineBox = null;
                 }
                 menuItem.label.show();
-                menuItem.label.set_text(truncate(
-                    (entry.isURL() || entry.isEmail()) ? urlText : rawText,
-                    MAX_ENTRY_LENGTH));
+                // Cut by WIDTH, not by character count. The row has a real
+                // width now (see .ci-history-menu-section in the stylesheet),
+                // and Pango's ellipsize shortens the text to exactly that width
+                // using the real glyph metrics. A character count cannot: 30
+                // "W" is 420 px where 30 "i" is 120 px, so every type was cut at
+                // a different visual length depending on which letters it
+                // happened to contain.
+                //
+                // Whitespace still has to be collapsed — a copied paragraph set
+                // verbatim would take over the menu — but that is not a form of
+                // shortening, so it is not tied to a length limit.
+                //
+                // The «Preview Size» setting no longer applies to these rows.
+                // It still does for the types that are not cut by width yet.
+                menuItem.label.set_text(collapseWhitespace(
+                    (entry.isURL() || entry.isEmail()) ? urlText : rawText));
             }
         } else if (entry.isImage()) {
             if (menuItem.imageSizeLabel) {
@@ -1427,8 +1505,20 @@ const ClipboardIndicator = GObject.registerClass({
             menuItem.actor.add_child(menuItem.tagLabel);
         }
 
+        // The label expands horizontally so that it is given a width to be cut
+        // against. PopupMenuItem creates it with y_expand only, so without this
+        // it asks for its full natural width and Pango's ellipsize never
+        // engages — the row would stretch the menu instead of shortening the
+        // text. The spacer must NOT expand as well: two expanding children in
+        // one box share the leftover space evenly, so the label would be cut to
+        // half the row. Its job is only to hold the action buttons away from
+        // the text, and an unexpanded spacer does that too once the label has
+        // claimed the space.
+        menuItem.label.x_expand = true;
+        menuItem.label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+
         menuItem.actionsSpacer = new St.Widget({
-            x_expand: true,
+            x_expand: false,
         });
         menuItem.actor.add_child(menuItem.actionsSpacer);
 
@@ -2290,6 +2380,14 @@ const ClipboardIndicator = GObject.registerClass({
 
             switch (group) {
             case 'items':
+                // «Preview Size» is in this group because it decides how much of
+                // an entry a row shows, and the menu's WIDTH is derived from it —
+                // so a change to it is a change to the menu's layout, not only to
+                // how much of each row is filled. It has to be applied here: put
+                // in another group's branch it would never run, because this
+                // switch dispatches on the group the key belongs to and no group
+                // fires twice.
+                this._applyMenuWidth();
                 this._refreshItemAppearance();
                 break;
             case 'menu':
