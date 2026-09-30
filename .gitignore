@@ -3,6 +3,23 @@
 # IDE
 .idea/
 
-# Local-only tools (not shipped, per-machine)
+# Per-machine tools, not shipped and not portable.
+#
+# tools/local/ is the runner, the .mo compiler and the clipboard diagnostics:
+# they encode this machine's paths, its X display and its dconf. tests/probes/
+# is the same kind of thing — a probe is an extension that drives a real nested
+# shell, so it needs the runner next to it and a display to run on.
+#
+# The unit tests in tests/ are deliberately NOT here: they are portable, they
+# need no shell, and they are the thing that catches a real regression.
 tools/local/
+tests/probes/
+
+# Fixture archives that the tests WRITE next to themselves. vault_align_test.js
+# builds its vault fixtures in a directory beside the test file, so these appear
+# on disk after a run and are not source. See tests/README.md.
+tests/align/
+tests/guard/
+
+# Machine-local overrides and scratch
 *.local

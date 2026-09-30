@@ -450,8 +450,12 @@ the original extension might add later):
 ## 🛠 Development
 
 ```bash
-# syntax check the JavaScript
-node --check *.js
+# syntax check the JavaScript AND run the test suite
+# (tests/ — see tests/README.md for what the checks are and how to read them)
+for f in tests/*_test.js; do
+    GI_TYPELIB_PATH=/usr/lib/gnome-shell:/usr/lib/x86_64-linux-gnu/mutter-14 \
+    GSETTINGS_SCHEMA_DIR=schemas gjs -m "$f" 2>&1 | grep -E '^  FAIL|passed,'
+done
 
 # update the translation template and merge it into the locale files
 make update-po-files
@@ -459,6 +463,12 @@ make update-po-files
 # compile translations (.po → .mo) and the GSettings schema
 make
 ```
+
+> **Do not use `node --check *.js` as the syntax check.** It parses each file as
+> a sloppy CommonJS script and passes on files GNOME Shell refuses to load — it
+> reported success on an `extension.js` that could not be imported at all. The
+> real check is `tests/syntax_test.js`, which uses the shell's own parser and is
+> part of the loop above.
 
 ## 📄 License & credits
 
