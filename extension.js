@@ -53,7 +53,7 @@ import {
     setNextHistoryClear, stripClipboardEdges,
 } from './clipboardSettings.js';
 import {scanPreviewLines} from './textPreview.js';
-import {ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
+import {createAspectImagePreview, ImagePreviewOverlay, showEditDialog, showTagDialog} from './dialogs.js';
 import {Keyboard} from './keyboard.js';
 import {NotificationSource} from './notifications.js';
 import {UrlMetadataManager} from './urlMetadataManager.js';
@@ -373,132 +373,6 @@ const ClipboardIndicator = GObject.registerClass({
     //  - onDims {Function|null}: called once with (width, height) once the
     //    natural image size is known; reuses the same texture load as the
     //    thumbnail, so no extra I/O or caching is needed.
-    #createAspectImagePreview(entry, previewClass, options = {}) {
-        const {
-            square = true,
-            maxWidth = 150,
-            onDims = null,
-            sizeHint = null,
-        } = options;
-        // Gap between the image and the 1px CSS border of the preview box (both
-        // square and rectangle modes).
-        const PREVIEW_INSET = 2;
-        const box = new St.Widget({
-            style_class: previewClass,
-            clip_to_allocation: true
-        });
-
-        this.registry.getEntryAsTexture(
-            entry,
-            sizeHint ? { width: sizeHint, height: sizeHint } : {}
-        ).then(actor => {
-            if (!actor || this._destroyed || !box.get_parent())
-                return;
-
-            // Fixed-size holder centered in the square; the texture child is
-            // allocated at its natural size and clipped to the holder.
-            const holder = new St.Bin({clip_to_allocation: true});
-            holder.add_constraint(new Clutter.AlignConstraint({
-                source: box,
-                align_axis: Clutter.AlignAxis.X_AXIS,
-                factor: 0.5
-            }));
-            holder.add_constraint(new Clutter.AlignConstraint({
-                source: box,
-                align_axis: Clutter.AlignAxis.Y_AXIS,
-                factor: 0.5
-            }));
-            box.add_child(holder);
-
-            let fitted = false;
-            let actorDestroyed = false;
-            let actorId = 0;
-            let boxAllocId = 0;
-            let boxDestroyId = 0;
-
-            const cleanup = () => {
-                if (actorId) {
-                    actor.disconnect(actorId);
-                    actorId = 0;
-                }
-                if (boxAllocId) {
-                    box.disconnect(boxAllocId);
-                    boxAllocId = 0;
-                }
-                if (boxDestroyId) {
-                    box.disconnect(boxDestroyId);
-                    boxDestroyId = 0;
-                }
-            };
-
-            let dimsReported = false;
-
-            const fitTexture = () => {
-                // Natural image size is only known once the texture content
-                // is set; the box pixel size only after allocation. Leave a
-                // small inset so the image never touches the 1px border.
-                const [, natW] = actor.get_preferred_width(-1);
-                const [, natH] = actor.get_preferred_height(-1);
-
-                if (natW > 0 && natH > 0 && !dimsReported) {
-                    dimsReported = true;
-                    if (onDims) onDims(natW, natH);
-                }
-
-                if (fitted)
-                    return;
-
-                if (square) {
-                    // Square thumbnail: center the fitted image in the box,
-                    // black letterboxing around it (CSS background).
-                    const fit = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
-                    if (natW <= 0 || natH <= 0 || fit <= 0)
-                        return;
-
-                    const scale = Math.min(fit / natW, fit / natH);
-                    holder.set_size(Math.max(1, Math.round(natW * scale)),
-                                    Math.max(1, Math.round(natH * scale)));
-                } else {
-                    // Rectangle thumbnail: constant item height (3em from CSS),
-                    // image fitted into maxWidth × that height, inset by
-                    // PREVIEW_INSET so it never touches the 1px border.
-                    const boxH = box.get_height();
-                    if (natW <= 0 || natH <= 0 || boxH <= 0)
-                        return;
-
-                    const fitW = maxWidth - 2 * PREVIEW_INSET;
-                    const fitH = boxH - 2 * PREVIEW_INSET;
-                    const scale = Math.min(fitW / natW, fitH / natH);
-                    const w = Math.max(1, Math.round(natW * scale));
-                    const h = Math.max(1, Math.round(natH * scale));
-                    holder.set_size(w, h);
-                    box.set_size(w + 2 * PREVIEW_INSET, boxH);
-                }
-
-                holder.set_child(actor);
-                fitted = true;
-
-                cleanup();
-            };
-
-            actorId = actor.connect('notify::content', fitTexture);
-            boxAllocId = box.connect('notify::allocation', fitTexture);
-            boxDestroyId = box.connect('destroy', () => {
-                cleanup();
-                if (!fitted && !actorDestroyed)
-                    actor.destroy();
-            });
-            actor.connect('destroy', () => {
-                actorDestroyed = true;
-                cleanup();
-            });
-
-            fitTexture();
-        });
-
-        return box;
-    }
-
     #updateIndicatorContent(entry) {
         if (this.preventIndicatorUpdate)
             return;
@@ -532,7 +406,9 @@ const ClipboardIndicator = GObject.registerClass({
             } else if (entry.isImage()) {
                 this._buttonText.set_text('');
                 this._buttonImgPreview.destroy_all_children();
-                const preview = this.#createAspectImagePreview(entry, 'clipboard-indicator-img-preview', {
+                const preview = createAspectImagePreview(entry, 'clipboard-indicator-img-preview', {
+                    registry: this.registry,
+                    isDestroyed: () => this._destroyed,
                     sizeHint: 96
                 });
                 preview.y_align = Clutter.ActorAlign.CENTER;
@@ -1234,7 +1110,9 @@ const ClipboardIndicator = GObject.registerClass({
             });
             menuItem.imageSizeLabel = sizeLabel;
 
-            const preview = this.#createAspectImagePreview(entry, 'clipboard-menu-img-preview', {
+            const preview = createAspectImagePreview(entry, 'clipboard-menu-img-preview', {
+                registry: this.registry,
+                isDestroyed: () => this._destroyed,
                 square: false,
                 maxWidth: 150,
                 onDims: (w, h) => {

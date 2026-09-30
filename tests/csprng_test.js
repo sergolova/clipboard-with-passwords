@@ -1,4 +1,4 @@
-// P0.1 CSPRNG test harness.
+// CSPRNG test harness.
 //
 // `random.js` is a pure module with NO gi:// imports and an injectable
 // entropy source, so this harness imports the REAL implementation and only

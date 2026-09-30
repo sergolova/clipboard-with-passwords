@@ -1,4 +1,4 @@
-// P2.2 smoke test: stale-temp cleanup mirror of passwordVault.js
+// Smoke test: stale-temp cleanup mirror of passwordVault.js
 // `_cleanupStaleTemp` against real scratch directories.
 //
 // passwordVault.js cannot be imported from the gjs CLI (it imports the shell

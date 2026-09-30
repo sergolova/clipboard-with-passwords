@@ -1,4 +1,4 @@
-// P1.3 + P2.4 logic test: vault resource-limit enforcement and strict schema
+// Logic test: vault resource-limit enforcement and strict schema
 // validation (constants.js caps + type coercion wired into _normalizeVaultData
 // / _sanitizeItem in passwordVault.js). passwordVault.js itself cannot be
 // imported from the node/gjs CLI (it imports the shell resource), so these are
@@ -14,7 +14,7 @@ import {
     MAX_EXTRA_FIELDS,
 } from '../constants.js';
 
-// --- replicas of passwordVault.js P1.3 + P2.4 logic -------------------------
+// --- replicas of the passwordVault.js limit and schema logic -----------------
 
 let _idCounter = 0;
 const _seenIds = new Set();
@@ -138,7 +138,7 @@ function throws(fn, tag, label) {
 }
 const item = (over = {}) => ({ name: 'svc', ...over });
 
-// --- P1.3: caps (unchanged from the P1.3 pass) --------------------------------
+// --- caps ------------------------------------------------------------------
 
 // valid loads: empty / single / multiple / missing optional fields
 let r = _normalizeVaultData({ items: [] });
@@ -181,7 +181,7 @@ ok(!payloadTooLarge(MAX_VAULT_JSON_BYTES) && payloadTooLarge(MAX_VAULT_JSON_BYTE
 ok(MAX_VAULT_ITEMS === 1000, 'item limit is 1000 (per task)');
 ok(MAX_FIELD_LENGTH >= 512 && MAX_EXTRA_FIELDS >= 8, 'generous caps: legit vaults never trip');
 
-// --- P2.4: malformed payloads — readable errors, never raw TypeError --------
+// --- malformed payloads: readable errors, never a raw TypeError ---------------
 
 throws(() => _normalizeVaultData(null), 'invalid-data', 'parsed null');
 throws(() => _normalizeVaultData('json'), 'invalid-data', 'parsed string');
@@ -206,7 +206,7 @@ ok(r.items[0].extraFields.length === 1 && r.items[0].extraFields[0].label === 'o
 r = _normalizeVaultData({ items: [item({ extraFields: 'nope' }), item({ extraFields: { label: 'x' } })] });
 ok(!r.items[0].extraFields && !r.items[1].extraFields, 'non-array extraFields ignored');
 
-// --- P2.4: type coercion (coerce & fix, per §8 matrix) -----------------------
+// --- type coercion -----------------------------------------------------------
 
 r = _normalizeVaultData({ items: [item({ name: 123 })] });
 ok(r.items[0].name === '123', 'name number → coerced string');
@@ -237,7 +237,7 @@ ok(r.items[0].extraFields[0].isHidden === undefined || r.items[0].extraFields[0]
 r = _normalizeVaultData({ items: [item({ extraFields: [{ label: 'h', value: 'v', isHidden: false }] })] });
 ok(!r.items[0].extraFields[0].isHidden, 'extra isHidden false → omitted');
 
-// --- P2.4: version handling ---------------------------------------------------
+// --- version handling ---------------------------------------------------------
 
 ok(_normalizeVaultData({ items: [] }).version === 1, 'absent version → 1');
 ok(_normalizeVaultData({ version: 1, items: [] }).version === 1, 'version 1 → kept');
@@ -246,12 +246,13 @@ ok(_normalizeVaultData({ version: '1.5', items: [] }).version === 1, 'string ver
 throws(() => _normalizeVaultData({ version: 2, items: [] }), 'unsupported-version', 'version 2 → rejected');
 throws(() => _normalizeVaultData({ version: 99, items: [] }), 'unsupported-version', 'version 99 → rejected');
 
-// caps STILL reject even with the new coercion (P2.4 must not weaken P1.3)
+// The caps must still reject even with the coercion applied: coercion exists to
+// accept well-formed equivalents, never to rescue an oversized archive.
 throws(() => _normalizeVaultData({ items: [item({ name: 'n'.repeat(MAX_FIELD_LENGTH + 1) })] }), 'field-too-long', 'caps still reject after coercion');
 
 // --- summary -----------------------------------------------------------------
 
-console.log(`\nP1.3+P2.4 vault limits & schema: ${passed} passed, ${failed} failed`);
+console.log(`\nvault limits & schema: ${passed} passed, ${failed} failed`);
 if (failed > 0) {
     console.error('Failures:');
     for (const f of failures) console.error(' -', f);

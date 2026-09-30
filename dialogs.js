@@ -9,10 +9,11 @@ import {themeClass, themeColors} from './theme.js';
 
 /**
  * Helpers extracted from the indicator class (extension.js): the full-screen
- * image preview overlay and the tag/edit dialogs for one clipboard entry.
- * The dialogs stay dumb — they build the widget tree and call back into the
- * indicator for anything stateful (menu reopening, cache updates, clipboard
- * writes); ordering of those side effects is preserved exactly.
+ * image preview overlay, the aspect-fitted image thumbnails, and the tag/edit
+ * dialogs for one clipboard entry. The dialogs stay dumb — they build the
+ * widget tree and call back into the indicator for anything stateful (menu
+ * reopening, cache updates, clipboard writes); ordering of those side effects
+ * is preserved exactly.
  */
 
 // Build a Clutter/Cogl color for the edit dialog from a CSS hex string and a
@@ -397,4 +398,166 @@ export class ImagePreviewOverlay {
         }
         overlay.destroy();
     }
+}
+// Gap between the image and the 1px CSS border of the preview box, in both
+// square and rectangle modes.
+const PREVIEW_INSET = 2;
+
+/**
+ * Build an aspect-fitted thumbnail box for an image entry.
+ *
+ * Three surfaces show a clipboard image, and all three must keep the source
+ * proportions — a stretched thumbnail misrepresents the screenshot it stands
+ * for. Two fitting modes exist because the two surfaces have different shapes:
+ *
+ *   square (the topbar thumb): the box is square, so the image is fitted to the
+ *   box's SHORT side and centred, with letterboxing around it from the CSS
+ *   background. The box is not resized.
+ *
+ *   rectangle (the menu row): the row has a constant height from CSS, so the
+ *   box is fitted into maxWidth × that height, and then the box is narrowed to
+ *   the image plus the border inset so the row does not reserve 150px of empty
+ *   space for a 40px-wide image.
+ *
+ * The returned actor is the box; the fitted image is added asynchronously once
+ * the texture loads and the box has been allocated. Callers that need the
+ * natural dimensions pass onDims — that is how the size label is filled, and it
+ * reports the SOURCE size, not the fitted one, because the label tells the user
+ * how big their image is.
+ *
+ * @param {object} entry - the image entry to preview
+ * @param {string} previewClass - style class for the box
+ * @param {object} opts
+ * @param {object} opts.registry - registry used to load the texture
+ * @param {Function} opts.isDestroyed - predicate; when it returns true the fit is abandoned
+ * @param {boolean} [opts.square=true] - square mode vs maxWidth × row-height mode
+ * @param {number} [opts.maxWidth=150] - maximum box width in rectangle mode
+ * @param {Function} [opts.onDims] - called with the natural (width, height)
+ * @param {number} [opts.sizeHint] - square pixel budget for the texture decode
+ * @returns {St.Widget} the preview box
+ */
+export function createAspectImagePreview(entry, previewClass, {
+    registry,
+    isDestroyed,
+    square = true,
+    maxWidth = 150,
+    onDims = null,
+    sizeHint = null,
+} = {}) {
+    const box = new St.Widget({
+        style_class: previewClass,
+        clip_to_allocation: true
+    });
+
+    registry.getEntryAsTexture(
+        entry,
+        sizeHint ? { width: sizeHint, height: sizeHint } : {}
+    ).then(actor => {
+        if (!actor || isDestroyed() || !box.get_parent())
+            return;
+
+        // Fixed-size holder centered in the box; the texture child is
+        // allocated at its natural size and clipped to the holder.
+        const holder = new St.Bin({clip_to_allocation: true});
+        holder.add_constraint(new Clutter.AlignConstraint({
+            source: box,
+            align_axis: Clutter.AlignAxis.X_AXIS,
+            factor: 0.5
+        }));
+        holder.add_constraint(new Clutter.AlignConstraint({
+            source: box,
+            align_axis: Clutter.AlignAxis.Y_AXIS,
+            factor: 0.5
+        }));
+        box.add_child(holder);
+
+        let fitted = false;
+        let actorDestroyed = false;
+        let actorId = 0;
+        let boxAllocId = 0;
+        let boxDestroyId = 0;
+
+        const cleanup = () => {
+            if (actorId) {
+                actor.disconnect(actorId);
+                actorId = 0;
+            }
+            if (boxAllocId) {
+                box.disconnect(boxAllocId);
+                boxAllocId = 0;
+            }
+            if (boxDestroyId) {
+                box.disconnect(boxDestroyId);
+                boxDestroyId = 0;
+            }
+        };
+
+        let dimsReported = false;
+
+        const fitTexture = () => {
+            // Natural image size is only known once the texture content
+            // is set; the box pixel size only after allocation. Leave a
+            // small inset so the image never touches the 1px border.
+            const [, natW] = actor.get_preferred_width(-1);
+            const [, natH] = actor.get_preferred_height(-1);
+
+            if (natW > 0 && natH > 0 && !dimsReported) {
+                dimsReported = true;
+                if (onDims) onDims(natW, natH);
+            }
+
+            if (fitted)
+                return;
+
+            if (square) {
+                // Square thumbnail: center the fitted image in the box,
+                // black letterboxing around it (CSS background).
+                const fit = Math.min(box.get_width(), box.get_height()) - 2 * PREVIEW_INSET;
+                if (natW <= 0 || natH <= 0 || fit <= 0)
+                    return;
+
+                const scale = Math.min(fit / natW, fit / natH);
+                holder.set_size(Math.max(1, Math.round(natW * scale)),
+                    Math.max(1, Math.round(natH * scale)));
+            } else {
+                // Rectangle thumbnail: constant item height (3em from CSS),
+                // image fitted into maxWidth × that height, inset by
+                // PREVIEW_INSET so it never touches the 1px border.
+                const boxH = box.get_height();
+                if (natW <= 0 || natH <= 0 || boxH <= 0)
+                    return;
+
+                const fitW = maxWidth - 2 * PREVIEW_INSET;
+                const fitH = boxH - 2 * PREVIEW_INSET;
+                // Both axes, not just the width: a tall screenshot scaled to
+                // maxWidth would be twice the row height and spill out of it.
+                const scale = Math.min(fitW / natW, fitH / natH);
+                const w = Math.max(1, Math.round(natW * scale));
+                const h = Math.max(1, Math.round(natH * scale));
+                holder.set_size(w, h);
+                box.set_size(w + 2 * PREVIEW_INSET, boxH);
+            }
+
+            holder.set_child(actor);
+            fitted = true;
+
+            cleanup();
+        };
+
+        actorId = actor.connect('notify::content', fitTexture);
+        boxAllocId = box.connect('notify::allocation', fitTexture);
+        boxDestroyId = box.connect('destroy', () => {
+            cleanup();
+            if (!fitted && !actorDestroyed)
+                actor.destroy();
+        });
+        actor.connect('destroy', () => {
+            actorDestroyed = true;
+            cleanup();
+        });
+
+        fitTexture();
+    });
+
+    return box;
 }
