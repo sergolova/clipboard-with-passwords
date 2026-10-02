@@ -2701,14 +2701,24 @@ const ClipboardIndicator = GObject.registerClass({
     }
 
     // Post-conversion dialog: reports the record count and the new path, and
-    // offers to delete the old-format file (and its .bak) so the vault folder
-    // does not silently end up with two copies.
+    // offers to delete the old-format file AND its backup so the vault folder
+    // does not silently end up with several copies.
+    //
+    // The wording names both files on purpose. Confirming here removes two
+    // encrypted archives, each of which is a complete copy of the vault — not
+    // "an old file" and not a temporary file. Saying so here is the difference
+    // between a user who understands they are dropping a redundant copy of their
+    // secrets and one who believes they are tidying up scratch space. The backup
+    // is only removed when it actually exists (removeVaultFile checks), so the
+    // text says "if present" rather than claiming a file that may not be there.
     async _showConversionResult(summary) {
         const removeOld = await this.dialogManager.openConfirm(
             _('Vault converted'),
             fmt(_('%1$d records were migrated into: %2$s'), summary.records, summary.newPath),
-            fmt(_('The previous archive is still at %1$s. Delete it now? The new archive was verified after writing.'), summary.previousPath),
-            _('Delete old archive'),
+            fmt(_('The old archive (%1$s) and its backup (%2$s, if present) are still on disk. Each of them is a full copy of your vault data. Delete both now? The new archive was verified after writing.'),
+                summary.previousPath,
+                `${summary.previousPath}.bak`),
+            _('Delete archive and backup'),
             _('Keep both'));
         if (removeOld) {
             this.vaultManager.removeVaultFile(summary.previousPath, { withBak: true });
