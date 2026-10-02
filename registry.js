@@ -58,6 +58,69 @@ const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-
 
 const HEX_LENGTHS = new Set([3, 4, 6, 8]);
 
+// How many cache entries the clear-on-boot sweep removes per async round. Large
+// enough that a full cache takes a handful of hops, small enough that a
+// round never holds more names in memory than a real cache is worth.
+const SWEEP_BATCH_SIZE = 32;
+
+// Async Gio wrappers, private to this module.
+//
+// They exist because GJS promise-ifies none of the three calls a directory sweep
+// needs, and each of the ways it says so is worth writing down, because every
+// one of them looks like a working program until it is run:
+//
+//   * Gio.File.enumerate_children_async requires its callback argument. The
+//     promise form is refused outright: «At least 5 arguments required, but only
+//     4 passed».
+//   * GFileEnumerator has no next_file_async at all — only the plural
+//     next_files_async. The singular one gives
+//     «TypeError: en.next_file_async is not a function».
+//   * The callback's FIRST argument is the object the method was called on, not
+//     an error. The `if (src)` reflex therefore reports every successful call as
+//     a failure. The error is raised by the matching *_finish() call, which is
+//     what a properly promise-ified call would have done for us.
+//
+// Each wrapper rejects with the GLib error from *_finish().
+function enumerateChildrenAsync (folder) {
+    return new Promise((resolve, reject) => {
+        folder.enumerate_children_async('', Gio.FileQueryInfoFlags.NONE,
+            GLib.PRIORITY_DEFAULT, null, (src, res) => {
+                try {
+                    resolve(folder.enumerate_children_finish(res));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+    });
+}
+
+// @param {number} max - upper bound on entries per round
+// @returns {Promise<Gio.FileInfo[]>} empty array once the directory is exhausted
+function nextFilesAsync (enumerator, max) {
+    return new Promise((resolve, reject) => {
+        enumerator.next_files_async(max, GLib.PRIORITY_DEFAULT, null, (src, res) => {
+            try {
+                resolve(enumerator.next_files_finish(res));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
+
+function deleteAsync (file) {
+    return new Promise((resolve, reject) => {
+        file.delete_async(GLib.PRIORITY_DEFAULT, null, (src, res) => {
+            try {
+                file.delete_finish(res);
+                resolve();
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
+
 export class Registry {
     constructor ({ settings, uuid }) {
         this.uuid = uuid;
@@ -422,20 +485,58 @@ export class Registry {
         }
     }
 
-    clearCacheFolder() {
-
-        const CANCELLABLE = null;
+    /**
+     * Empty the cache directory.
+     *
+     * Asynchronous, and that is not a style choice. Every delete here is a
+     * blocking syscall on the Shell's main loop, and this directory holds one
+     * file per image the user has copied while image caching is on — a few dozen
+     * on a light day, thousands on a heavy one. Doing that synchronously while
+     * the panel is being built freezes the compositor for as long as the
+     * filesystem takes, and a slow or removable cache directory makes it worse.
+     * GNOME's review guidelines call this out explicitly (EGO-X-004).
+     *
+     * Returns a promise that resolves when the sweep is done. Callers that read
+     * the cache afterwards MUST await it: the menu is populated from this
+     * directory, so clearing it in the background would let rows the user asked
+     * to have cleared appear on this boot.
+     *
+     * @returns {Promise<void>}
+     */
+    async clearCacheFolder() {
         try {
             const folder = Gio.file_new_for_path(this.REGISTRY_DIR);
-            const enumerator = folder.enumerate_children("", 1, CANCELLABLE);
+            const enumerator = await enumerateChildrenAsync(folder);
 
-            let file;
-            while ((file = enumerator.iterate(CANCELLABLE)[2]) != null) {
-                file.delete(CANCELLABLE);
+            for (;;) {
+                // Batched rather than one at a time: a round costs one async hop
+                // however many entries it returns, so a cache holding thousands
+                // of image files is emptied in far fewer hops.
+                const infos = await nextFilesAsync(enumerator, SWEEP_BATCH_SIZE);
+                if (!infos || infos.length === 0)
+                    break;
+
+                for (const info of infos) {
+                    const child = enumerator.get_child(info);
+                    try {
+                        // Awaited per entry, not per batch: this await is the only
+                        // thing that turns a failed unlink into the logged line
+                        // below. Dropping it would leave the rejection unhandled,
+                        // and the Shell reports those as criticals rather than
+                        // saying anything about a half-cleared cache.
+                        await deleteAsync(child);
+                    } catch (e) {
+                        // One undeletable entry must not abandon the rest. The
+                        // synchronous version this replaced had a single try
+                        // around the whole loop, so the first failure stopped the
+                        // sweep and left the cache half-cleared with nothing
+                        // reported about it.
+                        logError('Clipboard Indicator: failed to delete a cache entry: ' +
+                            child.get_path(), e);
+                    }
+                }
             }
-
-        }
-        catch (e) {
+        } catch (e) {
             logError(e);
         }
     }

@@ -332,11 +332,18 @@ const ClipboardIndicator = GObject.registerClass({
         this._createHistoryLabel();
         this._loadSettings();
 
-        if (CLEAR_ON_BOOT) this.registry.clearCacheFolder();
+        // Clear-on-boot has to finish BEFORE the menu reads this directory, otherwise a
+        // row the user asked to have cleared still shows up on this boot. That
+        // ordering used to be guaranteed by clearCacheFolder() being synchronous;
+        // now that it is async, the guarantee comes from putting it in front of
+        // the menu build in the same chain rather than firing it off.
+        const clearedCache = CLEAR_ON_BOOT
+            ? this.registry.clearCacheFolder()
+            : Promise.resolve();
 
         this.dialogManager = new DialogManager();
         this._vaultDialogs = [];
-        this._buildMenu().then(() => {
+        clearedCache.then(() => this._buildMenu()).then(() => {
             if (this._destroyed) {
                 return;
             }

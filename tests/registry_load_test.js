@@ -17,6 +17,7 @@
 //   gjs -m tools/local/registry_load_test.js
 
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 
 import {Registry} from '../registry.js';
 
@@ -120,8 +121,105 @@ entries = await registry.read();
 check('a corrupt file yields an empty history rather than a throw',
     Array.isArray(entries) && entries.length === 0, `${entries.length}`);
 
+console.log('\n7. the cache sweep empties the directory before it resolves');
+// clear-on-boot runs while the panel is being built, so a blocking delete here
+// freezes the compositor for as long as the filesystem takes, and the cache
+// holds one file per image the user has copied. It is asynchronous, and the
+// caller in extension.js relies on the promise meaning FINISHED: the menu is
+// populated from this same directory, so a sweep that merely started would let
+// rows the user asked to have cleared appear on this boot.
+//
+// Driven through clearCacheFolder() rather than through any internal helper,
+// because that is the contract the caller depends on. The internal async Gio
+// calls it is built on are each a way to be wrong that only shows up when GJS is
+// asked for a promise it does not provide: enumerate_children_async refuses the
+// promise form, GFileEnumerator has no next_file_async (only the plural
+// next_files_async), and the callback's first argument is the object the method
+// was called on, not an error — so the `if (src)` reflex calls every success a
+// failure. A harness that ran these against a plain main loop found all three.
+function listNames (dir) {
+    const names = [];
+    const enumerator = dir.enumerate_children('', Gio.FileQueryInfoFlags.NONE, null);
+    let child;
+    // [ok, info, child]: index 2 is a GFile, not a GFileInfo — which is why the
+    // sweep this test covers could hand it straight to delete().
+    while ((child = enumerator.iterate(null)[2]) !== null)
+        names.push(child.get_basename());
+    enumerator.close(null);
+    return names;
+}
+
+function sweepRegistry (dir) {
+    const r = new Registry({settings, uuid: 'cwp-sweep-test'});
+    r.REGISTRY_DIR = dir;
+    r.REGISTRY_PATH = `${dir}/registry.txt`;
+    r.BACKUP_REGISTRY_PATH = `${dir}/registry.txt~`;
+    return r;
+}
+
+function withFiles (name, count, {withSubdir = false} = {}) {
+    const dir = `${tmp}/${name}`;
+    Gio.File.new_for_path(dir).make_directory_with_parents(null);
+    for (let i = 0; i < count; i++) {
+        Gio.File.new_for_path(`${dir}/f${i}`).replace_contents(
+            'x', null, false, Gio.FileCreateFlags.NONE, null);
+    }
+    if (withSubdir) {
+        const sub = Gio.File.new_for_path(`${dir}/subdir`);
+        sub.make_directory_with_parents(null);
+        Gio.File.new_for_path(`${dir}/subdir/inner`).replace_contents(
+            'y', null, false, Gio.FileCreateFlags.NONE, null);
+    }
+    return Gio.File.new_for_path(dir);
+}
+
+// More files than one batch holds, so the walk has to take several rounds and
+// still finish: a sweep that stopped after the first batch would look identical
+// on a cache of 5 entries.
+const many = withFiles('sweep-many', 70);
+check('the sweep fixture is in place', listNames(many).length === 70, `${listNames(many).length}`);
+await sweepRegistry(many.get_path()).clearCacheFolder();
+check('the directory is empty the moment the promise resolves',
+    listNames(many).length === 0, `осталось ${listNames(many).length}`);
+
+console.log('\n8. an undeletable entry does not abandon the rest of the sweep');
+// The synchronous version this replaced had one try around the whole loop, so a
+// single failure stopped it and left the cache half-cleared with nothing said
+// about it. A subdirectory cannot be removed without recursion, which makes it
+// the reliable stand-in for a file the user happens to own.
+const mixed = withFiles('sweep-mixed', 5, {withSubdir: true});
+await sweepRegistry(mixed.get_path()).clearCacheFolder();
+const leftMixed = listNames(mixed);
+check('every plain file went despite the subdirectory failing',
+    leftMixed.length === 1 && leftMixed[0] === 'subdir', `осталось: ${leftMixed.join(',') || '—'}`);
+check('and the undeletable entry is reported, not swallowed',
+    Gio.File.new_for_path(`${mixed.get_path()}/subdir/inner`).query_exists(null),
+    'подкаталог исчез — тест больше ничего не проверяет');
+
+console.log('\n9. sweeping a directory that is not there is not an error');
+const absent = `${tmp}/sweep-absent`;
+let absentThrew = null;
+try {
+    await sweepRegistry(absent).clearCacheFolder();
+} catch (e) {
+    absentThrew = e;
+}
+check('a missing directory resolves instead of throwing', absentThrew === null,
+    absentThrew ? absentThrew.message : '');
+check('and it was not silently created', !Gio.File.new_for_path(absent).query_exists(null));
+
+console.log('\n10. an already empty directory is a no-op, not a failure');
+const none = withFiles('sweep-none', 0);
+let noneThrew = null;
+try {
+    await sweepRegistry(none.get_path()).clearCacheFolder();
+} catch (e) {
+    noneThrew = e;
+}
+check('sweeping zero entries resolves cleanly', noneThrew === null,
+    noneThrew ? noneThrew.message : '');
+
 // Clean up.
-const {Gio} = await import('gi://Gio');
 try {
     Gio.file_new_for_path(REGISTRY).delete(null);
 } catch (e) {
