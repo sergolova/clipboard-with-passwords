@@ -192,7 +192,6 @@
 
 .clipboard-type-protected {
     color: #fc8181;
-    background-color: rgba(252, 129, 129, 0.12);
 }
 
 /* ==========================================================================
@@ -213,7 +212,6 @@
 
 .ci-theme-light .clipboard-type-protected {
     color: #e53e3e;
-    background-color: rgba(229, 62, 62, 0.12);
 }
 
 /* Commas in the two colours below are not a style choice, they are the whole
