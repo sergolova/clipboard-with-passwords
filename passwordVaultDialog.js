@@ -709,6 +709,16 @@ export const ServiceEditDialog = GObject.registerClass(
             // DIAGNOSTIC (verification only, dropped at commit time): proves the
             // deferred-editable code is actually running in this shell session.
             // log(`[clipboard-with-passwords] service edit dialog: defer-editable armed (${(this._deferEditableEntries || []).length} entries)`);
+
+            // Nothing in the form may demand more width than the content box has.
+            // The title carries the service name and every field starts out
+            // non-editable, so both would report their whole text as the minimum
+            // width of the row they sit in, and that row would be given more width
+            // than the form has — leaving its own buttons outside the scroll view.
+            this._boundTextWidth(titleLabel);
+            (this._deferEditableEntries || []).forEach(entry => {
+                this._boundTextWidth(entry);
+            });
         }
 
         // Lay the category buttons out into rows that each fit the content box.
@@ -758,6 +768,11 @@ export const ServiceEditDialog = GObject.registerClass(
             this._deferEditableEntries.push(entry);
         }
 
+        _boundTextWidth(actor) {
+            if (actor?.clutter_text) {
+                actor.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            }
+        }
 
         _getTabOrderEntries() {
             let list = [
