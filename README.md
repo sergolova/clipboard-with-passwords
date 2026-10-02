@@ -69,8 +69,8 @@ Image items get a **proportional thumbnail** — non-square images are no longer
 Pinned (favorite) text items can be **masked** with a single click (`Apply privacy mask`). The last **3 characters** of the item are then replaced with `***` everywhere it is displayed — in the menu and in the topbar preview. Handy for passwords and other sensitive data during meetings and screen recordings. The mask is a **display-only** feature: the full value stays stored and readable (in the vault and in the item's own entry) — it is **not** encryption.
 
 ### 🔐 Built-in password manager
-- Sensitive data is stored in a **separate encrypted ZIP archive** at a user-defined path (default `~/.config/clipboard-with-passwords/storage.zip`).
-- The archive is a **standard encrypted ZIP** — it can be read and edited outside the extension (see [The vault archive](#-the-vault-archive)).
+- Sensitive data is stored in a **separate encrypted archive** at a user-defined path (a new vault is created as `~/.config/clipboard-with-passwords/storage.7z`; the path is listed in the Settings).
+- The archive is a **standard encrypted ZIP or 7z** — it can be read and edited outside the extension (see [The vault archive](#-the-vault-archive)).
 - The archive contains a single `data.json` file, which can also be edited manually.
 - Access is protected by a **master password**.
 
@@ -288,17 +288,19 @@ a file that claims to be ZIP.
   never overwrite a healthy vault — the previous archive and its `.bak` stay
   intact and the save fails with a clear error.
 
-Working with the archive manually:
+Working with the archive manually — replace `<vault-file>` below with the path
+shown in **Settings → Password vault** (a new vault is created as
+`storage.7z`, an older one keeps `storage.zip` until you switch the format):
 
 ```bash
 # list the contents (format is detected automatically)
-7z l ~/.config/clipboard-with-passwords/storage.zip
+7z l <vault-file>
 
 # extract the JSON to the current directory (you will be prompted for the master password)
-7z x ~/.config/clipboard-with-passwords/storage.zip
+7z x <vault-file>
 
 # extract the JSON to stdout and save it
-7z x -so ~/.config/clipboard-with-passwords/storage.zip > data.json
+7z x -so <vault-file> > data.json
 
 # write the file back into an AES-256 ZIP (compatibility format)
 7z a -tzip -mem=AES256 data.json
@@ -310,7 +312,7 @@ Working with the archive manually:
 Each save also keeps a `.bak` copy of the previous archive next to it.
 
 Saves are **atomic**: the archive is first written to a temporary file next to
-it (`storage.zip.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
+it (`<vault-file>.tmp-<timestamp>`, same directory ⇒ same filesystem) and then
 renamed over the target with `GLib.rename`, so a crash or power loss in the
 middle of a save leaves the previous archive (and its `.bak`) intact — a
 partial write can never overwrite the live vault. No guarantee is made that the
@@ -403,12 +405,14 @@ session.
   data (a fresh `.bak` is made from the previous state if it still existed).
 - If the vault is **locked** when the file disappears (e.g. after auto-lock on
   suspend): unlocking creates a **new empty** vault for that master password.
-  Your previous data is not destroyed though — the `storage.zip.bak` from the
-  last save (if any) is still on disk, and can be restored manually:
+  Your previous data is not destroyed though — the `.bak` copy from the last
+  save (if any) is still on disk next to the archive, and can be restored
+  manually:
 
 ```bash
 # recover the previous archive from the backup copy
-cp ~/.config/clipboard-with-passwords/storage.zip.bak ~/.config/clipboard-with-passwords/storage.zip
+# (<vault-file> is the path from Settings → Password vault)
+cp <vault-file>.bak <vault-file>
 ```
 
 **Invalid path or a write-protected file.** If the «Password vault file path»
@@ -430,7 +434,7 @@ the original extension might add later):
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` | Path to the encrypted vault ZIP/7z archive (a folder icon at the end of the row opens a file chooser to pick the file instead of typing it) |
+| `cwp-password-vault-path` | string | `~/.config/clipboard-with-passwords/storage.zip` (a new vault is created as `storage.7z`, since the format below defaults to 7z) | Path to the encrypted vault ZIP/7z archive (a folder icon at the end of the row opens a file chooser to pick the file instead of typing it) |
 | `cwp-vault-enabled` | boolean | `true` | Enable the built-in password vault entirely |
 | `cwp-vault-copy-to-history` | boolean | `false` | Add everything copied from the vault to the plain-text clipboard history (⚠️ insecure) |
 | `cwp-vault-format-7z` | boolean | `true` | Store the vault as a 7z archive with encrypted headers (hides the internal file name and per-entry sizes; opening it requires an application with 7z support) instead of the portable ZIP format. A new vault is created in 7z by default; an existing archive keeps its current format until you switch it here — the conversion is then offered on the next unlock (or right away while the vault is unlocked) and runs once you confirm it (the archive is rewritten and renamed to match, and its old copy is kept until you delete it in the result dialog) |
