@@ -345,42 +345,31 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         }
 
         this.recentBox.show();
-        let recentHeader = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
 
-        let recentEditBtn = new St.Button({
+        // The pinned service gets the same header as every other card — category,
+        // name, description — and the same two buttons, built by the same
+        // factories, so the two cannot drift apart again. Unpin is the only extra:
+        // it belongs to the banner and to nothing else, so it goes last.
+        //
+        // The accent colour is kept: it is what marks this service as pinned, and
+        // an ordinary card must not carry it.
+        const unpinBtn = new St.Button({
             style_class: 'button',
-            style: 'padding: 0 4px;',
-            accessible_name: _('Edit recent service'),
-            child: new St.Icon({icon_name: 'document-edit-symbolic', icon_size: 12})
-        });
-        recentEditBtn.connect('clicked', () => {
-            this._openEditDialog(recent, 'name');
-        });
-        recentHeader.add_child(recentEditBtn);
-
-        let recentNameLabel = new St.Label({
-            text: recent.name,
-            style: `font-weight: bold; font-size: 13px; color: ${themeColors().accent};`,
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.START
-        });
-        recentNameLabel.set_x_expand(true);
-        recentNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        recentHeader.add_child(recentNameLabel);
-
-        let clearRecentBtn = new St.Button({
-            style_class: 'button',
-            style: 'padding: 0 4px;',
+            can_focus: false,
             accessible_name: _('Clear recent service'),
+            style: 'padding: 2px 6px;',
             child: new St.Icon({icon_name: 'edit-clear-symbolic', icon_size: 12})
         });
-        clearRecentBtn.connect('clicked', () => {
+        unpinBtn.connect('clicked', () => {
             this.vaultManager.setRecentService(null);
             this._updateRecentBanner();
         });
-        recentHeader.add_child(clearRecentBtn);
 
-        this.recentBox.add_child(recentHeader);
+        this._addCardTitleBar(
+            this.recentBox, recent,
+            [this._createCopyAllButton(recent), this._createEditButton(recent), unpinBtn],
+            {highlightName: true});
+        this._addCardDescription(this.recentBox, recent);
 
         if (recent.login) {
             this.recentBox.add_child(this._createFieldRow(null, recent, _('Login'), recent.login, 'login'));
@@ -721,47 +710,14 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
         return record;
     }
 
-    // (Re)build the contents of a card. The card actor is created once and kept
-    // for the rest of the card's life, so its slot in the list, its scroll
-    // anchor and its identity all survive a content change.
-    _populateServiceCard(record, item) {
-        const c = themeColors();
-        const card = record.card;
-        card.destroy_all_children();
-        record.styled.length = 0;
-        record.remask.length = 0;
-
-        card.style = this._cardStyle();
-        record.styled.push({ actor: card, build: () => this._cardStyle() });
-
-        // Title bar: [категория] название
-        let titleBar = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
-
-        if (item.category) {
-            let catLabel = new St.Label({
-                text: `[${item.category}]`,
-                style: `font-size: 11px; color: ${c.secondary};`,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_align: Clutter.ActorAlign.START
-            });
-            record.styled.push({
-                actor: catLabel,
-                build: () => `font-size: 11px; color: ${themeColors().secondary};`
-            });
-            titleBar.add_child(catLabel);
-        }
-
-        let nameLabel = new St.Label({
-            text: item.name,
-            style: 'font-weight: bold; font-size: 13px;',
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.START
-        });
-        nameLabel.set_x_expand(true);
-        nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        titleBar.add_child(nameLabel);
-
-        let copyAllBtn = new St.Button({
+    // Copy the whole service to the clipboard as `Login: …` / `Password: …` lines,
+    // and pin it in the process — copying is what "recently used" means here.
+    //
+    // Built by a factory rather than written inline because the pinned banner has
+    // the same button, and two copies of a click handler is how the banner and
+    // the cards ended up with different headers in the first place.
+    _createCopyAllButton(item) {
+        const button = new St.Button({
             style_class: 'button',
             can_focus: false,
             accessible_name: _('Copy all'),
@@ -771,8 +727,11 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 icon_size: 12
             })
         });
-        copyAllBtn.connect('clicked', () => {
+
+        button.connect('clicked', () => {
+            const wasAlreadyRecent = this.vaultManager.recentService?.id === item.id;
             this.vaultManager.setRecentService(item);
+
             const lines = [];
             if (item.login) lines.push(`${_('Login')}: ${item.login}`);
             if (item.password) lines.push(`${_('Password')}: ${item.password}`);
@@ -784,39 +743,151 @@ export class PasswordVaultMenuSection extends PopupMenu.PopupMenuSection {
                 });
             }
             this.copyToClipboardCallback(lines.join('\n'));
-            this._updateRecentBanner();
-        });
-        titleBar.add_child(copyAllBtn);
 
-        let editCardBtn = new St.Button({
+            // The banner only has to be rebuilt when copying a DIFFERENT service
+            // changed what is pinned. Rebuilding it for the service already in it
+            // would tear down and recreate the banner the user just clicked in,
+            // for no change at all.
+            if (!wasAlreadyRecent)
+                this._updateRecentBanner();
+        });
+
+        return button;
+    }
+
+    // Open the edit dialog for a service. Saving goes through _openEditDialog(),
+    // which re-pins the service and calls the refresh callback — so an edit
+    // started from the banner also refreshes the banner.
+    //
+    // One accessible name for both places. The banner used to say «Edit recent
+    // service» and the cards «Edit service»; it is now the same button in both,
+    // and two strings for one button is the same drift this refactoring removed.
+    _createEditButton(item) {
+        const button = new St.Button({
             style_class: 'button',
+            can_focus: false,
             style: 'padding: 2px 6px;',
             accessible_name: _('Edit service'),
             child: new St.Icon({icon_name: 'document-edit-symbolic', icon_size: 12})
         });
-        editCardBtn.connect('clicked', () => {
+        button.connect('clicked', () => {
             this._openEditDialog(item, 'name');
         });
-        titleBar.add_child(editCardBtn);
+        return button;
+    }
+
+    // The title bar every card in this menu starts with: [category] name [buttons].
+    //
+    // Shared by the pinned-service banner and the ordinary service cards so the
+    // two cannot drift apart. They used to be written separately, and the
+    // banner had already fallen behind: it had no category, no description, and
+    // the same edit button in a different place. Standardising the header is
+    // structural — one implementation — rather than a promise to keep two in
+    // step by eye.
+    //
+    // `buttons` is the trailing action list and is the only part that differs:
+    // an ordinary card offers copy-all and edit, the banner offers only the
+    // button that unpins.
+    //
+    // `styled` collects the theme-dependent styles as thunks so a re-theme can
+    // re-apply them without rebuilding the card. It is null for the banner, which
+    // is rebuilt from scratch on every change and so has nothing to restyle.
+    //
+    // `highlightName` paints the name in the accent colour. Only the banner asks
+    // for it — the accent is what marks the pinned service, and an ordinary card
+    // in the list must not look pinned.
+    _addCardTitleBar(card, item, buttons, {styled = null, highlightName = false} = {}) {
+        const c = themeColors();
+
+        const titleBar = new St.BoxLayout({ vertical: false, style: 'margin-bottom: 4px; spacing: 6px;' });
+
+        if (item.category) {
+            const catLabel = new St.Label({
+                text: `[${item.category}]`,
+                style: `font-size: 11px; color: ${c.secondary};`,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.START
+            });
+            if (styled) {
+                styled.push({
+                    actor: catLabel,
+                    build: () => `font-size: 11px; color: ${themeColors().secondary};`
+                });
+            }
+            titleBar.add_child(catLabel);
+        }
+
+        const nameStyle = highlightName
+            ? `font-weight: bold; font-size: 13px; color: ${c.accent};`
+            : 'font-weight: bold; font-size: 13px;';
+        const nameLabel = new St.Label({
+            text: item.name,
+            style: nameStyle,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START
+        });
+        nameLabel.set_x_expand(true);
+        nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        if (styled) {
+            styled.push({
+                actor: nameLabel,
+                build: () => highlightName
+                    ? `font-weight: bold; font-size: 13px; color: ${themeColors().accent};`
+                    : 'font-weight: bold; font-size: 13px;'
+            });
+        }
+        titleBar.add_child(nameLabel);
+
+        for (const button of buttons)
+            titleBar.add_child(button);
 
         card.add_child(titleBar);
+    }
 
-        // Description (1 line, not copyable)
-        if (item.description) {
-            let descLabel = new St.Label({
-                text: item.description,
-                style: `font-size: 12px; color: ${c.desc}; padding: 0 2px; margin-bottom: 2px;`,
-                y_align: Clutter.ActorAlign.START,
-                x_align: Clutter.ActorAlign.START,
-                x_expand: true
-            });
-            descLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            record.styled.push({
+    // The one-line description under a title bar. Shared for the same reason as
+    // _addCardTitleBar: the banner used to have none at all, and a service that
+    // has a description should not show it only once it has been unpinned.
+    _addCardDescription(card, item, styled = null) {
+        if (!item.description)
+            return;
+
+        const descLabel = new St.Label({
+            text: item.description,
+            style: `font-size: 12px; color: ${themeColors().desc}; padding: 0 2px; margin-bottom: 2px;`,
+            y_align: Clutter.ActorAlign.START,
+            x_align: Clutter.ActorAlign.START,
+            x_expand: true
+        });
+        descLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        if (styled) {
+            styled.push({
                 actor: descLabel,
                 build: () => `font-size: 12px; color: ${themeColors().desc}; padding: 0 2px; margin-bottom: 2px;`
             });
-            card.add_child(descLabel);
         }
+        card.add_child(descLabel);
+    }
+
+    // (Re)build the contents of a card. The card actor is created once and kept
+    // for the rest of the card's life, so its slot in the list, its scroll
+    // anchor and its identity all survive a content change.
+    _populateServiceCard(record, item) {
+        const card = record.card;
+        card.destroy_all_children();
+        record.styled.length = 0;
+        record.remask.length = 0;
+
+        card.style = this._cardStyle();
+        record.styled.push({ actor: card, build: () => this._cardStyle() });
+
+        // Title bar and description, built by the shared helpers so that the pinned
+        // banner and an ordinary card cannot drift apart. The two shared buttons
+        // come from the same factories, so their handlers cannot drift either.
+        this._addCardTitleBar(
+            card, item,
+            [this._createCopyAllButton(item), this._createEditButton(item)],
+            {styled: record.styled});
+        this._addCardDescription(card, item, record.styled);
 
         // Login row
         if (item.login) {
